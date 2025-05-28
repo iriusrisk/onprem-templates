@@ -1,0 +1,64 @@
+name: validate-config
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - '**.yml'
+      - '**.yaml'
+      - '**.groovy'
+      - '**.md'
+  pull_request:
+    branches: ["**"]
+    paths:
+      - '**.yml'
+      - '**.yaml'
+      - '**.groovy'
+      - '**.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v2
+
+      - name: Validate docker-compose syntax
+        run: docker-compose -f docker/docker-compose.yml config
+
+      - name: Validate Podman config
+        run: |
+          if [ -f podman/container-compose.yml ]; then
+            docker-compose -f podman/container-compose.yml config
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Checkov
+        run: pip install checkov
+
+      - name: Run Checkov scan
+        run: checkov -d . --check CKV_SECRET_1
+
+      - name: Set up Node.js for Groovy lint
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install groovy-lint
+        run: npm install -g npm-groovy-lint
+
+      - name: Run Groovy linter
+        run: npm-groovy-lint "**/*.groovy"
+
+      - name: Run Gitleaks to detect secrets
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: .github/.gitleaks.toml
+          

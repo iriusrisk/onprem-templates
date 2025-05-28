@@ -63,8 +63,9 @@ jobs:
 
       - name: Run Groovy linter
         run: npm-groovy-lint "**/*.groovy"
-
-      - name: Run Gitleaks to detect secrets
-        uses: gitleaks/gitleaks-action@v2
-        with:
-          config-path: .github/.gitleaks.toml
+        
+      # Commenting this section for now since it takes a license
+      # - name: Run Gitleaks to detect secrets
+      #   uses: gitleaks/gitleaks-action@v2
+      #   with:
+      #     config-path: .github/.gitleaks.toml

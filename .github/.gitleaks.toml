@@ -1,4 +1,5 @@
-[[rules]]
-description = "Potential secret pattern"
-regex = '''(?i)(secret|password|api[_-]?key)[\s:=]+['"]?[A-Za-z0-9_\-]{8,}['"]?'''
-tags = ["key", "API", "generic"]
+# Commenting this file for now since it takes a license
+# [[rules]]
+# description = "Potential secret pattern"
+# regex = '''(?i)(secret|password|api[_-]?key)[\s:=]+['"]?[A-Za-z0-9_\-]{8,}['"]?'''
+# tags = ["key", "API", "generic"]

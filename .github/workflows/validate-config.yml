@@ -34,12 +34,12 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Validate docker-compose syntax
-        run: docker-compose -f docker/docker-compose.yml config
+        run: docker-compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml -f docker/docker-compose.saml.yml config
 
       - name: Validate Podman config
         run: |
           if [ -f podman/container-compose.yml ]; then
-            docker-compose -f podman/container-compose.yml config
+            docker-compose -f podman/container-compose.yml -f podman/container-compose.override.yml -f podman/container-compose.saml.yml config
           fi
 
       - name: Set up Python
@@ -63,7 +63,7 @@ jobs:
 
       - name: Run Groovy linter
         run: npm-groovy-lint "**/*.groovy"
-        
+
       # Commenting this section for now since it takes a license
       # - name: Run Gitleaks to detect secrets
       #   uses: gitleaks/gitleaks-action@v2

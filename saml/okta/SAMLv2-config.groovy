@@ -6,7 +6,7 @@ grails {
                 active = true
 
                 // Base to generate URLs for this server. For example: https://my-server:443/app. The public address your server will be accessed from should be used here.
-                entityBaseUrl = 'https://your-instance.iriusrisk.com';
+                entityBaseUrl = 'https://your-instance.iriusrisk.com'
 
                 // Informational -- Default entity id is set to iriusrisk-sp by default, if default, no need to uncomment below.
                 // entityId = "iriusrisk-sp"
@@ -27,7 +27,7 @@ grails {
 
                 // Custom Values, mapping Okta Groups GUIDs (used as keys in the configuration map userGroupToRoleMapping) to Irius RoleGroup names (used as values in the configuration map userGroupToRoleMapping)
                 userGroupToRoleMapping = [
-                /*
+                
                     'Your_okta_group':'ROLE_TEST_ONLY',
                     'Your_okta_group':'ROLE_ADMIN',
                     'Your_okta_group':'ROLE_PORTFOLIO_VIEW',
@@ -41,8 +41,7 @@ grails {
                     'Your_okta_group':'ROLE_TESTER',
                     'Your_okta_group':'ROLE_QUESTIONNAIRE_ONLY',
                     'Your_okta_group':'ROLE_LIBRARY_EDITOR'
-                    
-                    */
+        
                 ]
 
                 // If there is no information about roles in the SAML Response, IriusRisk will use this property to assign a default role to the User

@@ -6,7 +6,7 @@ grails {
                 active = true
 
                 // Base to generate URLs for this server. For example: https://my-server:443/app. The public address your server will be accessed from should be used here.
-                entityBaseUrl = 'https://your-instance.iriusrisk.com';
+                entityBaseUrl = 'https://your-instance.iriusrisk.com'
 
                 // Set Custom entity id for the instance where it is different from the default - "iriusrisk-sp".
                 // entityId = "custom-entity-id"
@@ -16,30 +16,31 @@ grails {
 
                // Mapping User fields to SAML fields, e.g: [firstName: givenName], firstName is the user field in IriusRisk (do not change), givenName is SAML field 
                 userAttributeMappings = [
-                    'username' : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress';,
-                    'firstName': 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname';,
-                    'lastName' : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname';,
-                    'email'    : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress';
+                    'username' : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress',
+                    'firstName': 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname',
+                    'lastName' : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname',
+                    'email'    : 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'
                 ]
 
                 // SAML assertion attribute that holds returned group membership data
-                userGroupAttribute = 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups';
+                userGroupAttribute = 'http://schemas.microsoft.com/ws/2008/06/identity/claims/groups'
 
                 // Custom Values, mapping Azure Groups GUIDs (used as keys in the configuration map userGroupToRoleMapping) to Irius RoleGroup names (used as values in the configuration map userGroupToRoleMapping)
+                // Replace 'Your_Azure_Group_ID' with the actual Azure AD group ID, for example: 'Spg72Xwt-O3Oq-au0x-SAFk-U86mCDbfYJ3K':'ROLE_DEVELOPER',
                 userGroupToRoleMapping = [
-                    'Your_Azure_Group_Ids':'ROLE_TEST_ONLY',
-                    'Your_Azure_Group_Ids':'ROLE_ADMIN',
-                    'Your_Azure_Group_Ids':'ROLE_PORTFOLIO_VIEW',
-                    'Your_Azure_Group_Ids':'ROLE_DEVELOPER',
-                    'vjvIVt2Y-1m9w-YAHA-kfNf-TvrvQjfDV5SI':'ROLE_FULL_ACCESS_USER',
-                    'cVKF1BWo-xOnx-kqyb-jS0N-JCeioBU9QfzY':'ROLE_MANAGE_USERS_BU',
-                    'lGqiGVlK-wftf-sbNJ-uft0-bpGya43Tu1Lu':'ROLE_RISK_MANAGER',
-                    'xQ2fb3qR-IApK-ByIz-gTFr-bueb8ieVSwn5':'ROLE_RULES_EDITOR',
-                    'yoHoV6OL-qfTz-6nAa-WOI2-JKl0IyqnIJDm':'ROLE_TEMPLATE_EDITOR',
-                    'Spg72Xwt-O3Oq-au0x-SAFk-U86mCDbfYJ3K':'ROLE_REQUIREMENTS_MANAGE',
-                    'Your_Azure_Group_Ids':'ROLE_TESTER',
-                    'Your_Azure_Group_Ids':'ROLE_QUESTIONNAIRE_ONLY',
-                    'Your_Azure_Group_Ids':'ROLE_LIBRARY_EDITOR'
+                    'Your_Azure_Group_ID':'ROLE_TEST_ONLY',
+                    'Your_Azure_Group_ID':'ROLE_ADMIN',
+                    'Your_Azure_Group_ID':'ROLE_PORTFOLIO_VIEW',
+                    'Your_Azure_Group_ID':'ROLE_DEVELOPER',
+                    'Your_Azure_Group_ID':'ROLE_FULL_ACCESS_USER',
+                    'Your_Azure_Group_ID':'ROLE_MANAGE_USERS_BU',
+                    'Your_Azure_Group_ID':'ROLE_RISK_MANAGER',
+                    'Your_Azure_Group_ID':'ROLE_RULES_EDITOR',
+                    'Your_Azure_Group_ID':'ROLE_TEMPLATE_EDITOR',
+                    'Your_Azure_Group_ID':'ROLE_REQUIREMENTS_MANAGE',
+                    'Your_Azure_Group_ID':'ROLE_TESTER',
+                    'Your_Azure_Group_ID':'ROLE_QUESTIONNAIRE_ONLY',
+                    'Your_Azure_Group_ID':'ROLE_LIBRARY_EDITOR'
                 ]
 
                 // If there is no information about roles in the SAML Response, IriusRisk will use this property to assign a default role to the User 

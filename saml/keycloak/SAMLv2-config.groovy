@@ -6,7 +6,7 @@ grails {
                 active = true
 
                 // Base to generate URLs for this server. For example: https://my-server:443/app. The public address your server will be accessed from should be used here.
-                entityBaseUrl = 'https://your-instance.iriusrisk.com';
+                entityBaseUrl = 'https://your-instance.iriusrisk.com'
 
                 entityId = "iriusrisk-app"
 

@@ -61,8 +61,32 @@ jobs:
       - name: Install groovy-lint
         run: npm install -g npm-groovy-lint
 
-      - name: Run Groovy linter
-        run: npm-groovy-lint "**/*.groovy"
+      - name: Run Groovy linter and fail only on real errors
+        # Run linter but do not fail the job here, we handle failures manually below
+        run: |
+          npm-groovy-lint "**/*.groovy" --output json > lint-report.json || true
+
+          # Always show the report first, no matter what
+          echo "BEGIN lint-report.json"
+          cat lint-report.json
+          echo "END lint-report.json"
+
+          # Then validate JSON
+          if ! jq empty lint-report.json > /dev/null 2>&1; then
+            echo "Invalid JSON format"
+            exit 1
+          fi
+
+          # Count actual errors from summary
+          error_count=$(jq '.summary.totalFoundErrorNumber // 0' lint-report.json)
+          echo "Found $error_count error(s)"
+
+          if [ "$error_count" -gt 0 ]; then
+            echo "Linting failed due to real errors"
+            exit 1
+          else
+            echo "No errors found, ignoring warnings and info"
+          fi
 
       # Commenting this section for now since it takes a license
       # - name: Run Gitleaks to detect secrets

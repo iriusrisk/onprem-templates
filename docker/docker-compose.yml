@@ -28,6 +28,7 @@ services:
       - grails_env=production
       - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
       - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
+      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000      
       - CATALINA_OPTS=
             -XX:+UseParallelGC
             -XX:+UseContainerSupport
@@ -57,3 +58,11 @@ services:
     mem_limit: 2G
     restart: unless-stopped
     cpu_shares: 128
+
+  reporting-module:
+    image: continuumsecurity/iriusrisk-prod:reporting-module
+    container_name: reporting-module
+    networks:
+      - iriusrisk-backend
+    ports:
+      - '3000:3000'

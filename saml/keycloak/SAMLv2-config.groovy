@@ -84,8 +84,10 @@ grails {
 
                 keyManager {
                     storeFile = 'file:/etc/irius/iriusrisk-sp.jks'
-                    storePass = 'changeit'
-                    passwords = [ 'iriusrisk-sp':'changeit' ]
+                    storePass = System.getenv('KEYSTORE_PASSWORD')
+                    passwords = [
+                        'iriusrisk-sp': (System.getenv('KEY_ALIAS_PASSWORD'))
+                    ]
                     defaultKey = 'iriusrisk-sp'
                 }
             }

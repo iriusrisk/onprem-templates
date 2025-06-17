@@ -3,6 +3,8 @@ version: '3.7'
 services:
   tomcat:
     environment:
+      - KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}
+      - KEY_ALIAS_PASSWORD=${KEY_ALIAS_PASSWORD}
       - CATALINA_OPTS=
             -"Dsaml.config.path=/etc/irius/SAMLv2-config.groovy"
             -XX:+UseParallelGC

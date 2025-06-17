@@ -1,2 +1,19 @@
 version: '3.7'
-services: {}
+
+services:
+  tomcat:
+    environment:
+      - KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}
+      - KEY_ALIAS_PASSWORD=${KEY_ALIAS_PASSWORD}
+      - CATALINA_OPTS=
+            -"Dsaml.config.path=/etc/irius/SAMLv2-config.groovy"
+            -XX:+UseParallelGC
+            -XX:+UseContainerSupport
+            -XX:MetaspaceSize=2G
+            -XX:MaxMetaspaceSize=2G
+            -XX:ReservedCodeCacheSize=2G
+            -XX:MaxRAMPercentage=50
+    volumes:
+      - "./SAMLv2-config.groovy:/etc/irius/SAMLv2-config.groovy" 
+      - "./idp.xml:/etc/irius/idp.xml" 
+      - "./iriusrisk-sp.jks:/etc/irius/iriusrisk-sp.jks"

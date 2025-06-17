@@ -1,2 +1,68 @@
 version: '3.7'
-services: {}
+
+networks:
+  iriusrisk-frontend:
+  iriusrisk-backend:
+
+services:
+
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    image: continuumsecurity/iriusrisk-prod:nginx
+    container_name: iriusrisk-nginx
+    networks:
+      - iriusrisk-frontend
+    mem_reservation: 50M
+    mem_limit: 200M
+    cpu_shares: 128
+    restart: unless-stopped
+    volumes:
+      - "./cert.pem:/etc/nginx/ssl/star_iriusrisk_com.crt:ro"
+      - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:ro"
+
+  tomcat:
+    environment:
+      - IRIUS_EDITION=onprem
+      - grails_env=production
+      - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
+      - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
+      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000      
+      - CATALINA_OPTS=
+            -XX:+UseParallelGC
+            -XX:+UseContainerSupport
+            -XX:MetaspaceSize=2G
+            -XX:MaxMetaspaceSize=2G
+            -XX:ReservedCodeCacheSize=2G
+            -XX:MaxRAMPercentage=50
+    image: continuumsecurity/iriusrisk-prod:tomcat-4
+    container_name: iriusrisk-tomcat
+    networks:
+      - iriusrisk-frontend
+      - iriusrisk-backend
+    mem_reservation: 2G
+    cpu_shares: 1024
+    volumes:
+      - "./ec_private.pem:/etc/irius/ec_private.pem"
+
+  startleft:
+    environment:
+      - IRIUS_SERVER=http://tomcat:80
+    image: continuumsecurity/iriusrisk-prod:startleft
+    container_name: iriusrisk-startleft
+    command: ["uvicorn", "startleft.startleft.api.fastapi_server:webapp", "--host", "0.0.0.0", "--port", "8081"]
+    networks:
+      - iriusrisk-backend
+    mem_reservation: 1G
+    mem_limit: 2G
+    restart: unless-stopped
+    cpu_shares: 128
+
+  reporting-module:
+    image: continuumsecurity/iriusrisk-prod:reporting-module
+    container_name: reporting-module
+    networks:
+      - iriusrisk-backend
+    ports:
+      - '3000:3000'

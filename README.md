@@ -62,7 +62,6 @@ You can fetch the latest public base and layer your local overrides in one line.
 ```bash
 curl -o docker-compose.yml https://raw.githubusercontent.com/iriusrisk/onprem-templates/main/docker/docker-compose.yml ; 
 docker-compose -f docker-compose.yml -f docker-compose-override.yml up -d
-
 ```
 
 ### Docker with SAML

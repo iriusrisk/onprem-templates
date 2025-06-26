@@ -89,6 +89,8 @@ docker-compose \
   up -d
 ```
 
+Similarly, use the `podman/` directory for Podman-based deployments, replacing docker-compose with container-compose.
+
 ---
 
 ## 📘 Customer Support Documentation

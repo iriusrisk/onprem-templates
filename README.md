@@ -1,7 +1,7 @@
 # IriusRisk On-Prem Templates Repository
 
 
-This repository contains official Docker, Podman, and Kubernetes configuration templates for deploying IriusRisk on-premise, including optional SAML integration. It is designed for clarity, maintainability, and reuse by structuring configs by deployment method and identity provider.
+This repository contains official Docker and Podman configuration templates for deploying IriusRisk on-premise, including optional SAML integration. It is designed for clarity, maintainability, and reuse by structuring configs by deployment method and identity provider.
 
 Get the latest base templates directly from GitHub, inject only your local secrets, and deploy in one command.
 
@@ -14,8 +14,6 @@ Get the latest base templates directly from GitHub, inject only your local secre
 │   ├── docker-compose.override.yml     # Compose file for customer secrets (local only)
 │   ├── docker-compose.saml.yml         # Compose file for SAML config (local only)
 │   └── docker-compose.yml              # Base compose file (public)
-├── kubernetes
-│   └── README.md                       # Kubernetes guidance
 ├── podman
 │   ├── container-compose.override.yml  # Podman secrets file (local only)
 │   ├── container-compose.saml.yml      # Podman SAML config (local only)

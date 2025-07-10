@@ -114,7 +114,6 @@ Similarly, use the `podman/` directory for Podman-based deployments, replacing d
 | **Docker**           | 20.10+                                                                |
 | **Docker Compose**   | 1.29.x                                                                |
 | **Podman** _(alt.)_  | 5.x+ with `podman-compose` & rootless support                        |
-| **Helm** _(K8s only)_| 3.11+                                                                 |
 | **Docker Hub Access**| Required to pull IriusRisk images (credentials via Support ticket)    |
 
 **Required local files** (beside your override/SAML templates):

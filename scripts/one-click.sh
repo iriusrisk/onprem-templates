@@ -90,7 +90,7 @@ elif [[ -f "one-click.sh" && -f "preflight.sh" && -f "setup-wizard.sh" ]]; then
     :
 elif [[ -d "../$SCRIPTS_SUBDIR" && -f "../$SCRIPTS_SUBDIR/one-click.sh" ]]; then
     cd "../$SCRIPTS_SUBDIR"
-if [[ ! -d "$REPO_DIR" ]]; then
+elif [[ ! -d "$REPO_DIR" ]]; then
     # Only install git if not present
     if ! command -v git &>/dev/null; then
         echo "git not found, installing..."

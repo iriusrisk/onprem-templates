@@ -1,0 +1,2 @@
+# Ignore preflight output log from scripts
+scripts/preflight_output.txt

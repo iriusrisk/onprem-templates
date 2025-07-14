@@ -37,7 +37,13 @@ JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&passwor
 IRIUS_EXT_URL="https\\\\://$HOST_NAME"
 
 # SAML setup
-read -rp "Do you want to enable SAML support? (y/n): " ENABLE_SAML
+if [[ -n "$SAML_CHOICE" ]]; then
+    ENABLE_SAML="$SAML_CHOICE"
+    echo "SAML setup: Using value from one-click ('${SAML_CHOICE}')"
+else
+    read -rp "Do you want to enable SAML support? (y/n): " ENABLE_SAML
+fi
+
 if [[ "$ENABLE_SAML" =~ ^[Yy] ]]; then
     read -rp "Enter SAML keystore password (KEYSTORE_PASSWORD): " SAML_KEYSTORE_PASSWORD
     read -rp "Enter SAML key alias password (KEY_ALIAS_PASSWORD): " SAML_KEY_ALIAS_PASSWORD

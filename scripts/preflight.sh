@@ -64,6 +64,29 @@ else
     echo "Linux OS detected"
 fi
 
+# Check for git installed
+if command -v git &>/dev/null; then
+    echo "git found."
+
+    # Check if user.name is set
+    GIT_NAME=$(git config --global user.name)
+    if [[ -z "$GIT_NAME" ]]; then
+        WARNINGS+=("WARNING: git user.name is not set globally. Use: git config --global user.name 'Your Name'")
+    else
+        echo "git user.name: $GIT_NAME"
+    fi
+
+    # Check if user.email is set
+    GIT_EMAIL=$(git config --global user.email)
+    if [[ -z "$GIT_EMAIL" ]]; then
+        WARNINGS+=("WARNING: git user.email is not set globally. Use: git config --global user.email 'your@email.com'")
+    else
+        echo "git user.email: $GIT_EMAIL"
+    fi
+else
+    ERRORS+=("ERROR: git is not installed. Please install git to clone or update the repository.")
+fi
+
 # Check Docker or Podman and set override file
 docker_present=0
 podman_present=0
@@ -122,7 +145,7 @@ if [[ -n "$OVERRIDE_FILE" && -f "$OVERRIDE_FILE" ]]; then
     # Extract NG_SERVER_NAME
     NG_SERVER_NAME=$(grep NG_SERVER_NAME "$OVERRIDE_FILE" | head -1 | sed 's/.*NG_SERVER_NAME=//;s/"//g' | xargs)
     if [[ -z "$NG_SERVER_NAME" || "$NG_SERVER_NAME" == "\${HOST_NAME}" || "$NG_SERVER_NAME" == '${HOST_NAME}' ]]; then
-        ERRORS+=("ERROR: NG_SERVER_NAME must be set to a real value in $OVERRIDE_FILE (not left as \${HOST_NAME})")
+        WARNINGS+=("WARNING: NG_SERVER_NAME must be set to a real value in $OVERRIDE_FILE (not left as \${HOST_NAME})")
     else
         echo "NG_SERVER_NAME: $NG_SERVER_NAME"
     fi
@@ -130,7 +153,7 @@ if [[ -n "$OVERRIDE_FILE" && -f "$OVERRIDE_FILE" ]]; then
     # Extract IRIUS_EXT_URL
     IRIUS_EXT_URL=$(grep IRIUS_EXT_URL "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_EXT_URL=//;s/"//g' | xargs)
     if [[ -z "$IRIUS_EXT_URL" || "$IRIUS_EXT_URL" == *'${HOST_NAME}'* ]]; then
-        ERRORS+=("ERROR: IRIUS_EXT_URL must be set to a real value in $OVERRIDE_FILE (not left as \${HOST_NAME})")
+        WARNINGS+=("WARNING: IRIUS_EXT_URL must be set to a real value in $OVERRIDE_FILE (not left as \${HOST_NAME})")
     else
         echo "IRIUS_EXT_URL: $IRIUS_EXT_URL"
     fi
@@ -140,10 +163,10 @@ if [[ -n "$OVERRIDE_FILE" && -f "$OVERRIDE_FILE" ]]; then
     POSTGRES_VALUES_FILLED=1
 
     if [[ -z "$IRIUS_DB_URL" ]]; then
-        ERRORS+=("ERROR: IRIUS_DB_URL must be set in $OVERRIDE_FILE")
+        WARNINGS+=("WARNING: IRIUS_DB_URL must be set in $OVERRIDE_FILE")
         POSTGRES_VALUES_FILLED=0
     elif [[ "$IRIUS_DB_URL" == *'${POSTGRES_IP}'* || "$IRIUS_DB_URL" == *'${POSTGRES_PASSWORD}'* ]]; then
-        ERRORS+=("ERROR: IRIUS_DB_URL must be filled in with real Postgres IP and password, not left as template variables in $OVERRIDE_FILE")
+        WARNINGS+=("WARNING: IRIUS_DB_URL must be filled in with real Postgres IP and password, not left as template variables in $OVERRIDE_FILE")
         POSTGRES_VALUES_FILLED=0
     else
         echo "IRIUS_DB_URL: $IRIUS_DB_URL"
@@ -151,7 +174,7 @@ if [[ -n "$OVERRIDE_FILE" && -f "$OVERRIDE_FILE" ]]; then
 
 else
     if [[ -n "$OVERRIDE_FILE" ]]; then
-        ERRORS+=("ERROR: $OVERRIDE_FILE not found (required for custom config)")
+        WARNINGS+=("WARNING: $OVERRIDE_FILE not found (required for custom config)")
     fi
 fi
 
@@ -162,7 +185,7 @@ if [[ -n "$SAML_FILE" && -f "$SAML_FILE" ]]; then
     # Extract and validate KEYSTORE_PASSWORD
     SAML_KEYSTORE_PASSWORD=$(grep KEYSTORE_PASSWORD "$SAML_FILE" | head -1 | sed 's/.*KEYSTORE_PASSWORD=//;s/"//g' | xargs)
     if [[ -z "$SAML_KEYSTORE_PASSWORD" || "$SAML_KEYSTORE_PASSWORD" == "\${KEYSTORE_PASSWORD}" || "$SAML_KEYSTORE_PASSWORD" == '${KEYSTORE_PASSWORD}' ]]; then
-        ERRORS+=("ERROR: KEYSTORE_PASSWORD must be set to a real value in $SAML_FILE (not left as \${KEYSTORE_PASSWORD})")
+        WARNINGS+=("WARNING: KEYSTORE_PASSWORD must be set to a real value in $SAML_FILE (not left as \${KEYSTORE_PASSWORD})")
     else
         echo "KEYSTORE_PASSWORD set in $SAML_FILE"
     fi
@@ -170,7 +193,7 @@ if [[ -n "$SAML_FILE" && -f "$SAML_FILE" ]]; then
     # Extract and validate KEY_ALIAS_PASSWORD
     SAML_KEY_ALIAS_PASSWORD=$(grep KEY_ALIAS_PASSWORD "$SAML_FILE" | head -1 | sed 's/.*KEY_ALIAS_PASSWORD=//;s/"//g' | xargs)
     if [[ -z "$SAML_KEY_ALIAS_PASSWORD" || "$SAML_KEY_ALIAS_PASSWORD" == "\${KEY_ALIAS_PASSWORD}" || "$SAML_KEY_ALIAS_PASSWORD" == '${KEY_ALIAS_PASSWORD}' ]]; then
-        ERRORS+=("ERROR: KEY_ALIAS_PASSWORD must be set to a real value in $SAML_FILE (not left as \${KEY_ALIAS_PASSWORD})")
+        WARNINGS+=("WARNING: KEY_ALIAS_PASSWORD must be set to a real value in $SAML_FILE (not left as \${KEY_ALIAS_PASSWORD})")
     else
         echo "KEY_ALIAS_PASSWORD set in $SAML_FILE"
     fi

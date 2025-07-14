@@ -90,7 +90,9 @@ elif [[ -f "one-click.sh" && -f "preflight.sh" && -f "setup-wizard.sh" ]]; then
     :
 elif [[ -d "../$SCRIPTS_SUBDIR" && -f "../$SCRIPTS_SUBDIR/one-click.sh" ]]; then
     cd "../$SCRIPTS_SUBDIR"
-elif [[ ! -d "$REPO_DIR" ]]; then
+fi
+
+if [[ ! -d "$REPO_DIR" ]]; then
     # Only install git if not present
     if ! command -v git &>/dev/null; then
         echo "git not found, installing..."
@@ -99,7 +101,7 @@ elif [[ ! -d "$REPO_DIR" ]]; then
     echo "IriusRisk repo not found. Cloning (branch: $BRANCH)..."
     git clone --branch "$BRANCH" --single-branch "$REPO_URL"
     cd "$REPO_DIR/$SCRIPTS_SUBDIR"
-else
+elif [[ ! -f "one-click.sh" || ! -f "preflight.sh" || ! -f "setup-wizard.sh" ]]; then
     echo "Could not locate or clone the onprem-templates repo. Please check your environment."
     exit 1
 fi

@@ -3,6 +3,7 @@
 set -e
 
 REPO_URL="https://github.com/iriusrisk/onprem-templates.git"
+BRANCH="${BRANCH:-main}"
 REPO_DIR="onprem-templates"
 SCRIPTS_SUBDIR="scripts"
 
@@ -89,10 +90,14 @@ elif [[ -f "one-click.sh" && -f "preflight.sh" && -f "setup-wizard.sh" ]]; then
     :
 elif [[ -d "../$SCRIPTS_SUBDIR" && -f "../$SCRIPTS_SUBDIR/one-click.sh" ]]; then
     cd "../$SCRIPTS_SUBDIR"
-elif [[ ! -d "$REPO_DIR" ]]; then
-    echo "IriusRisk repo not found. Cloning..."
-    install_git
-    git clone "$REPO_URL"
+if [[ ! -d "$REPO_DIR" ]]; then
+    # Only install git if not present
+    if ! command -v git &>/dev/null; then
+        echo "git not found, installing..."
+        install_git
+    fi
+    echo "IriusRisk repo not found. Cloning (branch: $BRANCH)..."
+    git clone --branch "$BRANCH" --single-branch "$REPO_URL"
     cd "$REPO_DIR/$SCRIPTS_SUBDIR"
 else
     echo "Could not locate or clone the onprem-templates repo. Please check your environment."

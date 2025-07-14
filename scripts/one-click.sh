@@ -79,34 +79,25 @@ function has_setup_fixable_warnings() {
 print_header
 
 # 0. Ensure we're in scripts dir, clone if needed
-SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -f "$REPO_DIR/$SCRIPTS_SUBDIR/one-click.sh" ]]; then
-    cd "$REPO_DIR/$SCRIPTS_SUBDIR"
-elif [[ -d "$REPO_DIR" ]]; then
-    cd "$REPO_DIR"
-    [[ -d "$SCRIPTS_SUBDIR" ]] && cd "$SCRIPTS_SUBDIR"
-elif [[ -f "one-click.sh" && -f "preflight.sh" && -f "setup-wizard.sh" ]]; then
-    :
-elif [[ -d "../$SCRIPTS_SUBDIR" && -f "../$SCRIPTS_SUBDIR/one-click.sh" ]]; then
-    cd "../$SCRIPTS_SUBDIR"
+# If we’re already inside onprem-templates/scripts, just stay there
+if [[ -f "$SCRIPT_PATH/preflight.sh" && -f "$SCRIPT_PATH/setup-wizard.sh" ]]; then
+  echo "Detected local onprem-templates repo at $(dirname "$SCRIPT_PATH")"
+  cd "$SCRIPT_PATH"
+
+# Otherwise, if there’s no repo folder at all, clone it next to where we started
+elif [[ ! -d "$REPO_DIR" ]]; then
+  echo "Cloning repo (branch: $BRANCH)..."
+  git clone --branch "$BRANCH" --single-branch "$REPO_URL"
+  cd "$REPO_DIR/$SCRIPTS_SUBDIR"
+
+# Otherwise we *do* have a folder, so cd into its scripts subdir
+else
+  cd "$REPO_DIR/$SCRIPTS_SUBDIR"
 fi
 
-if [[ ! -d "$REPO_DIR" ]]; then
-    # Only install git if not present
-    if ! command -v git &>/dev/null; then
-        echo "git not found, installing..."
-        install_git
-    fi
-    echo "IriusRisk repo not found. Cloning (branch: $BRANCH)..."
-    git clone --branch "$BRANCH" --single-branch "$REPO_URL"
-    cd "$REPO_DIR/$SCRIPTS_SUBDIR"
-elif [[ ! -f "one-click.sh" || ! -f "preflight.sh" || ! -f "setup-wizard.sh" ]]; then
-    echo "Could not locate or clone the onprem-templates repo. Please check your environment."
-    exit 1
-fi
-
-echo "Current directory: $(pwd)"
+echo "Running from $(pwd)"
 echo
 
 # 1. Run preflight and capture errors/warnings

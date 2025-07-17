@@ -1,34 +1,109 @@
 #!/usr/bin/env bash
+set -e
 
-echo "Welcome to the IriusRisk On-Premise Interactive Setup Wizard"
-echo "-----------------------------------------------------------"
+# —————————————————————————————————————————————————————————————
+# Print header
+# —————————————————————————————————————————————————————————————
+function print_header() {
+    echo "IriusRisk On-Premise Interactive Setup Wizard"
+    echo "--------------------------------------------"
+}
 
-# Ask for Docker or Podman
-read -rp "Are you deploying with Docker or Podman? (docker/podman): " STACK_TYPE
+# —————————————————————————————————————————————————————————————
+# Input validation functions
+# —————————————————————————————————————————————————————————————
+function prompt_yn() {
+    # $1 = prompt
+    while true; do
+        read -rp "$1 (y/n): " yn
+        yn=${yn,,}
+        case "$yn" in
+            y|yes) echo "y"; return 0 ;;
+            n|no)  echo "n"; return 0 ;;
+            *)
+                echo "Invalid input: '$yn'. Please enter 'y' or 'n'." >&2
+                ;;
+        esac
+    done
+}
 
-if [[ "$STACK_TYPE" =~ ^[Dd]ocker ]]; then
-    OVERRIDE_FILE="../docker/docker-compose.override.yml"
-    SAML_FILE="../docker/docker-compose.saml.yml"
-elif [[ "$STACK_TYPE" =~ ^[Pp]odman ]]; then
-    OVERRIDE_FILE="../podman/container-compose.override.yml"
-    SAML_FILE="../podman/container-compose.saml.yml"
+function prompt_engine() {
+    # $1 = prompt
+    while true; do
+        read -rp "$1 (docker/podman): " engine
+        engine=${engine,,}
+        case "$engine" in
+            docker|podman)
+                echo "$engine"
+                return 0
+                ;;
+            *)
+                echo "Invalid input: '$engine'. Please enter 'docker' or 'podman'." >&2
+                ;;
+        esac
+    done
+}
+
+function prompt_nonempty() {
+    # $1 = prompt
+    local value
+    while true; do
+        read -rp "$1: " value
+        if [[ -n "$value" ]]; then
+            echo "$value"
+            return 0
+        else
+            echo "Invalid input: value cannot be empty. Please enter a value." >&2
+        fi
+    done
+}
+
+print_header
+
+# —————————————————————————————————————————————————————————————
+# 0. Decide which container engine to use (passed-in or standalone)
+# —————————————————————————————————————————————————————————————
+if [[ -n "$CONTAINER_ENGINE" ]]; then
+    ENGINE="$CONTAINER_ENGINE"
+    echo "Using container engine: $ENGINE"
 else
-    echo "Invalid option. Please run the script again and enter either 'docker' or 'podman'."
-    exit 1
+    ENGINE=$(prompt_engine "Which container engine should we configure?")
+    export CONTAINER_ENGINE="$ENGINE"
+    echo "→ Selected container engine: $ENGINE"
 fi
 
-# Prompt for host name only
-read -rp "Enter the public hostname for your IriusRisk instance (HOST_NAME, e.g. iriusrisk.example.com): " HOST_NAME
+# —————————————————————————————————————————————————————————————
+# 1. Set override & SAML-file paths once, for downstream logic
+# —————————————————————————————————————————————————————————————
+case "$ENGINE" in
+    docker)
+        OVERRIDE_FILE="../docker/docker-compose.override.yml"
+        SAML_FILE="../docker/docker-compose.saml.yml"
+        ;;
+    podman)
+        OVERRIDE_FILE="../podman/container-compose.override.yml"
+        SAML_FILE="../podman/container-compose.saml.yml"
+        ;;
+    *)
+        echo "ERROR: Unknown engine '$ENGINE'" >&2
+        exit 1
+        ;;
+esac
+
+# —————————————————————————————————————————————————————————————
+# 2. Prompt for key values (with validation)
+# —————————————————————————————————————————————————————————————
+HOST_NAME=$(prompt_nonempty "Enter the public hostname for your IriusRisk instance (HOST_NAME, e.g. iriusrisk.example.com)")
 
 # Internal or external Postgres
-read -rp "Do you want to use an internal Postgres container? (y/n): " USE_INTERNAL_PG
-if [[ "$USE_INTERNAL_PG" =~ ^[Yy] ]]; then
+USE_INTERNAL_PG=$(prompt_yn "Do you want to use an internal Postgres container")
+if [[ "$USE_INTERNAL_PG" == "y" ]]; then
     DB_IP="postgres"
 else
-    read -rp "Enter the Postgres IP address (DB host): " DB_IP
+    DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
 fi
 
-read -rp "Enter the Postgres password: " DB_PASS
+DB_PASS=$(prompt_nonempty "Enter the Postgres password")
 
 # Properly escape JDBC URL for YAML
 JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"
@@ -36,20 +111,24 @@ JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&passwor
 # Properly escape protocol colon in IRIUS_EXT_URL
 IRIUS_EXT_URL="https\\\\://$HOST_NAME"
 
-# SAML setup
+# —————————————————————————————————————————————————————————————
+# 3. SAML setup
+# —————————————————————————————————————————————————————————————
 if [[ -n "$SAML_CHOICE" ]]; then
     ENABLE_SAML="$SAML_CHOICE"
     echo "SAML setup: Using value from one-click ('${SAML_CHOICE}')"
 else
-    read -rp "Do you want to enable SAML support? (y/n): " ENABLE_SAML
+    ENABLE_SAML=$(prompt_yn "Do you want to enable SAML support")
 fi
 
-if [[ "$ENABLE_SAML" =~ ^[Yy] ]]; then
-    read -rp "Enter SAML keystore password (KEYSTORE_PASSWORD): " SAML_KEYSTORE_PASSWORD
-    read -rp "Enter SAML key alias password (KEY_ALIAS_PASSWORD): " SAML_KEY_ALIAS_PASSWORD
+if [[ "$ENABLE_SAML" == "y" ]]; then
+    SAML_KEYSTORE_PASSWORD=$(prompt_nonempty "Enter SAML keystore password (KEYSTORE_PASSWORD)")
+    SAML_KEY_ALIAS_PASSWORD=$(prompt_nonempty "Enter SAML key alias password (KEY_ALIAS_PASSWORD)")
 fi
 
-# --- Safely update docker/podman override file ---
+# —————————————————————————————————————————————————————————————
+# 4. Safely update override file
+# —————————————————————————————————————————————————————————————
 if [[ ! -f "$OVERRIDE_FILE" ]]; then
     echo "ERROR: $OVERRIDE_FILE not found. Please ensure you have cloned the repo and have the override template."
     exit 1
@@ -58,7 +137,7 @@ fi
 # Update NG_SERVER_NAME (replace any occurrence)
 sed -i "s|NG_SERVER_NAME=.*|NG_SERVER_NAME=$HOST_NAME|g" "$OVERRIDE_FILE"
 
-# Update IRIUS_EXT_URL (replace ${HOST_NAME} or any existing value)
+# Update IRIUS_EXT_URL (replace \${HOST_NAME} or any existing value)
 sed -i "s|IRIUS_EXT_URL=.*|IRIUS_EXT_URL=$IRIUS_EXT_URL|g" "$OVERRIDE_FILE"
 
 # Remove existing IRIUS_DB_URL line (escaped or not)
@@ -78,8 +157,10 @@ awk -v db_url="      - IRIUS_DB_URL=$JDBC_URL" '
 
 echo "Updated $OVERRIDE_FILE"
 
-# --- Safely update SAML override if enabled ---
-if [[ "$ENABLE_SAML" =~ ^[Yy] ]]; then
+# —————————————————————————————————————————————————————————————
+# 5. Safely update SAML override if enabled
+# —————————————————————————————————————————————————————————————
+if [[ "$ENABLE_SAML" == "y" ]]; then
     if [[ ! -f "$SAML_FILE" ]]; then
         echo "ERROR: $SAML_FILE not found. Please ensure you have the SAML override template."
         exit 1
@@ -111,22 +192,24 @@ else
     echo "Skipping SAML override file as SAML is not enabled."
 fi
 
-# --- Summary ---
+# —————————————————————————————————————————————————————————————
+# 6. Summary
+# —————————————————————————————————————————————————————————————
 echo
-echo "--------------------------------------"
+echo "--------------------------------------------"
 echo "Setup complete. Summary of your values:"
-echo "Deployment stack:     $STACK_TYPE"
-echo "HOST_NAME:            $HOST_NAME"
-echo "Postgres host/IP:     $DB_IP"
-echo "Postgres password:    [set]"
-echo "Override file:        $OVERRIDE_FILE"
-if [[ "$ENABLE_SAML" =~ ^[Yy] ]]; then
-    echo "SAML enabled:         yes"
-    echo "KEYSTORE_PASSWORD:    [set]"
-    echo "KEY_ALIAS_PASSWORD:   [set]"
-    echo "SAML override file:   $SAML_FILE"
+echo "Container engine:      $ENGINE"
+echo "HOST_NAME:             $HOST_NAME"
+echo "Postgres host/IP:      $DB_IP"
+echo "Postgres password:     [set]"
+echo "Override file:         $OVERRIDE_FILE"
+if [[ "$ENABLE_SAML" == "y" ]]; then
+    echo "SAML enabled:          yes"
+    echo "KEYSTORE_PASSWORD:     [set]"
+    echo "KEY_ALIAS_PASSWORD:    [set]"
+    echo "SAML override file:    $SAML_FILE"
 else
-    echo "SAML enabled:         no"
+    echo "SAML enabled:          no"
 fi
 echo
 echo "You can rerun this wizard to update your settings anytime."

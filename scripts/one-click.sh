@@ -1,17 +1,52 @@
 #!/usr/bin/env bash
-
 set -e
 
-REPO_URL="https://github.com/iriusrisk/onprem-templates.git"
-BRANCH="${BRANCH:-main}"
-REPO_DIR="onprem-templates"
-SCRIPTS_SUBDIR="scripts"
-
+# —————————————————————————————————————————————————————————————
+# Print header
+# —————————————————————————————————————————————————————————————
 function print_header() {
     echo "IriusRisk One-Click Bootstrap Deployment"
     echo "---------------------------------------"
 }
 
+# —————————————————————————————————————————————————————————————
+# Input validation functions
+# —————————————————————————————————————————————————————————————
+function prompt_yn() {
+    # $1 = prompt
+    while true; do
+        read -rp "$1 (y/n): " yn
+        yn=${yn,,}
+        case "$yn" in
+            y|yes) echo "y"; return 0 ;;
+            n|no)  echo "n"; return 0 ;;
+            *)
+                echo "Invalid input: '$yn'. Please enter 'y' or 'n'." >&2
+                ;;
+        esac
+    done
+}
+
+function prompt_engine() {
+    # $1 = prompt
+    while true; do
+        read -rp "$1 (docker/podman): " engine
+        engine=${engine,,}
+        case "$engine" in
+            docker|podman)
+                echo "$engine"
+                return 0
+                ;;
+            *)
+                echo "Invalid input: '$engine'. Please enter 'docker' or 'podman'." >&2
+                ;;
+        esac
+    done
+}
+
+# —————————————————————————————————————————————————————————————
+# Dependency install functions
+# —————————————————————————————————————————————————————————————
 function install_docker() {
     echo "Installing Docker..."
     if command -v apt-get &>/dev/null; then
@@ -23,23 +58,19 @@ function install_docker() {
         sudo yum install -y docker docker-compose
         sudo systemctl start docker
         sudo systemctl enable docker
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y docker docker-compose
+        sudo systemctl start docker
+        sudo systemctl enable docker
     else
-        echo "Please install Docker and Docker Compose manually."
+        echo "Please install Docker and Docker Compose manually." >&2
         exit 1
     fi
 }
 
 function install_podman() {
-    echo "Installing Podman..."
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update
-        sudo apt-get install -y podman podman-compose
-    elif command -v yum &>/dev/null; then
-        sudo yum install -y podman podman-compose
-    else
-        echo "Please install podman and podman-compose manually."
-        exit 1
-    fi
+    echo "Installing Podman and podman-compose..."
+    sudo dnf install -y container-tools podman-compose || sudo yum install -y container-tools podman-compose
 }
 
 function install_git() {
@@ -50,7 +81,7 @@ function install_git() {
     elif command -v yum &>/dev/null; then
         sudo yum install -y git
     else
-        echo "Please install git manually."
+        echo "Please install git manually." >&2
         exit 1
     fi
 }
@@ -63,12 +94,12 @@ function install_java() {
     elif command -v yum &>/dev/null; then
         sudo yum install -y java-17-openjdk
     else
-        echo "Please install Java 17 manually."
+        echo "Please install Java 17 manually." >&2
         exit 1
     fi
 }
 
-# Helper for setup-fixable warnings
+
 function has_setup_fixable_warnings() {
     echo "$1" | grep -q "must be set to a real value" && return 0
     echo "$1" | grep -q "not set in" && return 0
@@ -76,136 +107,168 @@ function has_setup_fixable_warnings() {
     return 1
 }
 
+function is_rhel_like() {
+    source /etc/os-release
+    [[ "$ID_LIKE" == *rhel* ]] || [[ "$ID_LIKE" == *fedora* ]] || [[ "$ID" == "fedora" ]] || [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]
+}
+
+
+# —————————————————————————————————————————————————————————————
+# Script Start
+# —————————————————————————————————————————————————————————————
 print_header
 
-# 0. Ensure we're in scripts dir, clone if needed
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="https://github.com/iriusrisk/onprem-templates.git"
+BRANCH="${BRANCH:-main}"
+REPO_DIR="onprem-templates"
+SCRIPTS_SUBDIR="scripts"
 
-# If we’re already inside onprem-templates/scripts, just stay there
+# —————————————————————————————————————————————————————————————
+# 0. Ensure we're in the scripts dir (or clone it)
+# —————————————————————————————————————————————————————————————
+SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 if [[ -f "$SCRIPT_PATH/preflight.sh" && -f "$SCRIPT_PATH/setup-wizard.sh" ]]; then
-  echo "Detected local onprem-templates repo at $(dirname "$SCRIPT_PATH")"
-  cd "$SCRIPT_PATH"
-
-# Otherwise, if there’s no repo folder at all, clone it next to where we started
+    cd "$SCRIPT_PATH"
 elif [[ ! -d "$REPO_DIR" ]]; then
-  echo "Cloning repo (branch: $BRANCH)..."
-  git clone --branch "$BRANCH" --single-branch "$REPO_URL"
-  cd "$REPO_DIR/$SCRIPTS_SUBDIR"
-
-# Otherwise we *do* have a folder, so cd into its scripts subdir
+    if ! command -v git &>/dev/null; then
+        echo "git not found, installing..."
+        install_git
+    fi
+    echo "IriusRisk repo not found. Cloning (branch: $BRANCH)..."
+    git clone --branch "$BRANCH" --single-branch "$REPO_URL"
+    cd "$REPO_DIR/$SCRIPTS_SUBDIR"
+elif [[ ! -f "$REPO_DIR/$SCRIPTS_SUBDIR/one-click.sh" ]]; then
+    echo "Could not locate or clone the onprem-templates repo. Please check your environment." >&2
+    exit 1
 else
-  cd "$REPO_DIR/$SCRIPTS_SUBDIR"
+    cd "$REPO_DIR/$SCRIPTS_SUBDIR"
 fi
 
-echo "Running from $(pwd)"
+echo "Current directory: $(pwd)"
 echo
 
-# 1. Run preflight and capture errors/warnings
-./preflight.sh > preflight_output.txt 2>&1 || true
+# —————————————————————————————————————————————————————————————
+# 1. Pick your container engine once (validate)
+# —————————————————————————————————————————————————————————————
+if is_rhel_like; then
+    ENGINE=$(prompt_engine "Which container engine do you want to use for deployment? (docker/podman)")
+else
+    echo "Only Docker is supported on your system. Using Docker."
+    ENGINE="docker"
+fi
+export CONTAINER_ENGINE="$ENGINE"
 
+# —————————————————————————————————————————————————————————————
+# 2. SAML question early if needed (validate Y/N)
+# —————————————————————————————————————————————————————————————
+    ENABLE_SAML_ONCLICK=$(prompt_yn "Enable SAML integration for this deployment?")
+    if [[ "$ENABLE_SAML_ONCLICK" == "n" ]]; then
+        PRE_WARNS=$(
+            printf '%s\n' "$PRE_WARNS" \
+            | grep -Ev "KEYSTORE_PASSWORD must be set|KEY_ALIAS_PASSWORD must be set" \
+            || true
+        )
+        SKIP_SAML="yes"
+    fi
+
+# —————————————————————————————————————————————————————————————
+# 3. Run preflight and capture output
+# —————————————————————————————————————————————————————————————
+SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh" > preflight_output.txt 2>&1 || true
 PRE_ERRS=$(grep 'ERROR:' preflight_output.txt | grep -v '^ERRORS:' || true)
 PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
 
-# 2. Install missing dependencies (auto-fix if needed)
+# —————————————————————————————————————————————————————————————
+# 4. Install missing dependencies
+# —————————————————————————————————————————————————————————————
 if echo "$PRE_ERRS" | grep -q "git is not installed"; then
     install_git
 fi
 if echo "$PRE_ERRS" | grep -q "Java not found"; then
     install_java
 fi
-if echo "$PRE_ERRS" | grep -q "Neither Docker nor Podman is installed"; then
-    read -rp "Install Docker or Podman? (docker/podman): " WHICH_STACK
-    if [[ "$WHICH_STACK" =~ ^[Dd]ocker ]]; then
+
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+    if ! command -v docker &>/dev/null; then
         install_docker
-    else
+    fi
+elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+    if ! command -v podman &>/dev/null; then
         install_podman
     fi
-elif echo "$PRE_ERRS" | grep -q "docker-compose is not installed"; then
-    install_docker
-elif echo "$PRE_ERRS" | grep -q "podman-compose is not installed"; then
-    install_podman
+    if ! command -v podman-compose &>/dev/null; then
+        install_podman
+    fi
+else
+    echo "Unknown container engine: $CONTAINER_ENGINE"
+    exit 1
 fi
 
-# 3. SAML question early if needed (check warnings only, as SAML is now only a warning)
-SKIP_SAML=""
-
-# Only prompt if one or both SAML warnings are actually present
-if echo "$PRE_WARNS" \
-    | grep -qE "KEYSTORE_PASSWORD must be set|KEY_ALIAS_PASSWORD must be set"; then
-
-  read -rp "Do you want to enable SAML integration for this deployment? (y/n): " ENABLE_SAML_ONCLICK
-  if [[ ! "$ENABLE_SAML_ONCLICK" =~ ^[Yy] ]]; then
-    # safely remove just those two warning lines, without exiting on "no match"
-    PRE_WARNS=$(
-      printf '%s\n' "$PRE_WARNS" \
-      | grep -Ev "KEYSTORE_PASSWORD must be set|KEY_ALIAS_PASSWORD must be set" \
-      || true
-    )
-    SKIP_SAML="yes"
-  fi
-fi
-
-# 4. If override/SAML warnings remain, run setup wizard
+# —————————————————————————————————————————————————————————————
+# 5. If setup-wizard is needed, run it
+# —————————————————————————————————————————————————————————————
 if has_setup_fixable_warnings "$PRE_WARNS"; then
+    echo
     echo "WARNING: Override and/or SAML override files are missing or incomplete."
     echo "Launching the interactive setup wizard..."
-
-    if [[ "$SKIP_SAML" == "yes" ]]; then
-    SAML_CHOICE="n"
-    elif [[ "$ENABLE_SAML_ONCLICK" =~ ^[Yy] ]]; then
-    SAML_CHOICE="y"
-    fi
-
-    if [[ -n "$SAML_CHOICE" ]]; then
-    SAML_CHOICE="$SAML_CHOICE" ./setup-wizard.sh
+    set +e
+    if [[ -n "$ENABLE_SAML_ONCLICK" ]]; then
+        CONTAINER_ENGINE="$CONTAINER_ENGINE" \
+          SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
+          ./setup-wizard.sh
     else
-    ./setup-wizard.sh
+        CONTAINER_ENGINE="$CONTAINER_ENGINE" ./setup-wizard.sh
     fi
+    set -e
 
+    echo
     echo "Re-running preflight after setup..."
-    ./preflight.sh > preflight_output.txt 2>&1 || true
-    PRE_ERRS=$(grep 'ERROR:' preflight_output.txt | grep -v '^ERRORS:' || true)
-    PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
-    if [[ "$SKIP_SAML" == "yes" ]]; then
-        PRE_WARNS=$(echo "$PRE_WARNS" | grep -v "KEYSTORE_PASSWORD must be set" | grep -v "KEY_ALIAS_PASSWORD must be set")
-    fi
+    cd "$SCRIPT_PATH"
+    SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh"
+    PRE_ERR=$?
 fi
 
-echo
-echo "Preflight errors:"
-echo "$PRE_ERRS"
-echo "Preflight warnings:"
-echo "$PRE_WARNS"
-echo
-
-# 5. Only block on critical errors (ignore warnings)
-if [[ -n "$PRE_ERRS" ]]; then
-    echo "There are still critical errors detected:"
-    echo "$PRE_ERRS"
+# —————————————————————————————————————————————————————————————
+# 6. Block on critical errors
+# —————————————————————————————————————————————————————————————
+if [[ $PRE_ERR -ne 0 ]]; then
+    echo
+    echo "Preflight detected critical errors above."
     echo "Please resolve these before proceeding with deployment."
     exit 1
 fi
 
-# 6. Confirm deploy, even if warnings remain
-read -rp "All checks complete. Proceed with deployment? (y/n): " DEPLOY_OK
-if [[ ! "$DEPLOY_OK" =~ ^[Yy] ]]; then
+# —————————————————————————————————————————————————————————————
+# 7. Confirm deploy (validate Y/N)
+# —————————————————————————————————————————————————————————————
+DEPLOY_OK=$(prompt_yn "All checks complete. Proceed with deployment?")
+if [[ "$DEPLOY_OK" == "n" ]]; then
     echo "Aborted by user."
     exit 0
 fi
 
-# 7. Deploy the stack
-if command -v docker &>/dev/null; then
-    echo "Deploying with Docker Compose..."
-    cd ../docker
-    docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
-elif command -v podman &>/dev/null; then
-    echo "Deploying with Podman Compose..."
-    cd ../podman
-    podman-compose -f container-compose.yml -f container-compose.override.yml up -d
-else
-    echo "Could not determine if Docker or Podman is in use. Please deploy manually."
-    exit 1
-fi
+# —————————————————————————————————————————————————————————————
+# 8. Deploy based on selected engine
+# —————————————————————————————————————————————————————————————
+case "$CONTAINER_ENGINE" in
+    docker)
+        echo
+        echo "Deploying with Docker Compose..."
+        cd ../docker
+        docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
+        ;;
+    podman)
+        echo
+        echo "Deploying with Podman Compose..."
+        cd ../podman
+        podman-compose -f container-compose.yml -f container-compose.override.yml up -d
+        ;;
+    *)
+        echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
+        exit 1
+        ;;
+esac
 
 echo
 echo "IriusRisk deployment started."

@@ -138,11 +138,13 @@ elif [[ ! -d "$REPO_DIR" ]]; then
     echo "IriusRisk repo not found. Cloning (branch: $BRANCH)..."
     git clone --branch "$BRANCH" --single-branch "$REPO_URL"
     cd "$REPO_DIR/$SCRIPTS_SUBDIR"
+    SCRIPT_PATH="$(pwd)"
 elif [[ ! -f "$REPO_DIR/$SCRIPTS_SUBDIR/one-click.sh" ]]; then
     echo "Could not locate or clone the onprem-templates repo. Please check your environment." >&2
     exit 1
 else
     cd "$REPO_DIR/$SCRIPTS_SUBDIR"
+    SCRIPT_PATH="$(pwd)"
 fi
 
 echo "Current directory: $(pwd)"

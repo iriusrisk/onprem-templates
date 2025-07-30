@@ -96,14 +96,29 @@ esac
 HOST_NAME=$(prompt_nonempty "Enter the public hostname for your IriusRisk instance (HOST_NAME, e.g. iriusrisk.example.com)")
 
 # Internal or external Postgres
-USE_INTERNAL_PG=$(prompt_yn "Do you want to use an internal Postgres container")
+if [[ -n "$USE_INTERNAL_PG" ]]; then
+    echo "Using internal Postgres setting: $USE_INTERNAL_PG"
+else
+    USE_INTERNAL_PG=$(prompt_yn "Do you want to use an internal Postgres container")
+fi
+
 if [[ "$USE_INTERNAL_PG" == "y" ]]; then
     DB_IP="postgres"
 else
-    DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
+    # Use DB_IP from env if set (for local install), otherwise prompt
+    if [[ -n "$DB_IP" ]]; then
+        echo "Using Postgres IP address from environment: $DB_IP"
+    else
+        DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
+    fi
 fi
 
-DB_PASS=$(prompt_nonempty "Enter the Postgres password")
+# Use DB_PASS from env if set (for local install), otherwise prompt
+if [[ -n "$DB_PASS" ]]; then
+    echo "Using Postgres password from environment."
+else
+    DB_PASS=$(prompt_nonempty "Enter the Postgres password")
+fi
 
 # Properly escape JDBC URL for YAML
 JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"

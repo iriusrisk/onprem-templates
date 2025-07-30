@@ -1,2 +1,6 @@
 # Ignore preflight output log from scripts
 scripts/preflight_output.txt
+
+# Ignore generated certificates
+docker/*.pem
+podman/*.pem

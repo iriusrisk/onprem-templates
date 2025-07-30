@@ -261,7 +261,7 @@ fi
 # —————————————————————————————————————————————————————————————
 echo "Checking required local certificate/key files..."
 for f in cert.pem key.pem ec_private.pem; do
-    check_file "$f"
+    check_file "../$CONTAINER_ENGINE/$f"
 done
 
 # —————————————————————————————————————————————————————————————
@@ -345,7 +345,7 @@ if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
     DB_PASS=$(echo "$IRIUS_DB_URL" | sed -n 's/.*password=\([^& ]*\).*/\1/p')
     if [[ -n "$DB_IP" && -n "$DB_PASS" ]]; then
         if command -v psql &>/dev/null; then
-            if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusrisk -c '\q' 2>/dev/null; then
+            if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then
                 echo "Postgres connection to $DB_IP OK"
             else
                 msg="ERROR: Could not connect to Postgres at $DB_IP with supplied password (check Postgres service, IP, and credentials)"

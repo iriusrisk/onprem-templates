@@ -8,38 +8,14 @@ set -e
 echo "IriusRisk One-Click Bootstrap Deployment"
 echo "---------------------------------------"
 
-REPO_URL="https://github.com/iriusrisk/onprem-templates.git"
-BRANCH="${BRANCH:-main}"
-REPO_DIR="onprem-templates"
-SCRIPTS_SUBDIR="scripts"
-
 # —————————————————————————————————————————————————————————————
-# 0. Ensure we're in the scripts dir (or clone it)
+# 0. Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-
-if [[ -f "$SCRIPT_PATH/preflight.sh" && -f "$SCRIPT_PATH/setup-wizard.sh" ]]; then
-    cd "$SCRIPT_PATH"
-elif [[ ! -d "$REPO_DIR" ]]; then
-    if ! command -v git &>/dev/null; then
-        echo "git not found, installing..."
-        install_git
-    fi
-    echo "IriusRisk repo not found. Cloning (branch: $BRANCH)..."
-    git clone --branch "$BRANCH" --single-branch "$REPO_URL"
-    cd "$REPO_DIR/$SCRIPTS_SUBDIR"
-    SCRIPT_PATH="$(pwd)"
-elif [[ ! -f "$REPO_DIR/$SCRIPTS_SUBDIR/one-click.sh" ]]; then
-    echo "Could not locate or clone the onprem-templates repo. Please check your environment." >&2
-    exit 1
-else
-    cd "$REPO_DIR/$SCRIPTS_SUBDIR"
-    SCRIPT_PATH="$(pwd)"
-fi
+cd "$SCRIPT_PATH"
 
 echo "Current directory: $(pwd)"
 echo
-
 
 # —————————————————————————————————————————————————————————————
 # 1. Pick your container engine and generate certificates

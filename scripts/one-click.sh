@@ -126,18 +126,18 @@ function install_and_configure_postgres() {
 
     # Terminate connections to the DB, if any
     echo "Terminating any existing connections to $PG_DB..."
-    sudo -u $PG_SUPERUSER psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$PG_DB';" || true
+    sudo -u $PG_SUPERUSER psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$PG_DB';" 2>/dev/null || true
+
 
     # Drop the database if it exists
     echo "Dropping database $PG_DB if it exists..."
-    sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB';" | grep -q 1 \
-    && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP DATABASE \"$PG_DB\";" \
+    sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB';" 2>/dev/null | grep -q 1 \
+    && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP DATABASE \"$PG_DB\";" 2>/dev/null \
     || echo "Database $PG_DB does not exist, skipping drop."
 
     # Drop the user if it exists
-    echo "Dropping user $PG_USER if it exists..."
-    sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER';" | grep -q 1 \
-    && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP ROLE \"$PG_USER\";" \
+    sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER';" 2>/dev/null | grep -q 1 \
+    && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP ROLE \"$PG_USER\";" 2>/dev/null \
     || echo "Role $PG_USER does not exist, skipping drop."
 
     if command -v apt-get &>/dev/null; then

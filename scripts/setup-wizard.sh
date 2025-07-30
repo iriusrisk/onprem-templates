@@ -1,76 +1,14 @@
 #!/usr/bin/env bash
+source functions.sh
 set -e
 
-# —————————————————————————————————————————————————————————————
-# Print header
-# —————————————————————————————————————————————————————————————
-function print_header() {
-    echo "IriusRisk On-Premise Interactive Setup Wizard"
-    echo "--------------------------------------------"
-}
-
-# —————————————————————————————————————————————————————————————
-# Input validation functions
-# —————————————————————————————————————————————————————————————
-function prompt_yn() {
-    # $1 = prompt
-    while true; do
-        read -rp "$1 (y/n): " yn
-        yn=${yn,,}
-        case "$yn" in
-            y|yes) echo "y"; return 0 ;;
-            n|no)  echo "n"; return 0 ;;
-            *)
-                echo "Invalid input: '$yn'. Please enter 'y' or 'n'." >&2
-                ;;
-        esac
-    done
-}
-
-function prompt_engine() {
-    # $1 = prompt
-    while true; do
-        read -rp "$1 (docker/podman): " engine
-        engine=${engine,,}
-        case "$engine" in
-            docker|podman)
-                echo "$engine"
-                return 0
-                ;;
-            *)
-                echo "Invalid input: '$engine'. Please enter 'docker' or 'podman'." >&2
-                ;;
-        esac
-    done
-}
-
-function prompt_nonempty() {
-    # $1 = prompt
-    local value
-    while true; do
-        read -rp "$1: " value
-        if [[ -n "$value" ]]; then
-            echo "$value"
-            return 0
-        else
-            echo "Invalid input: value cannot be empty. Please enter a value." >&2
-        fi
-    done
-}
-
-print_header
+echo "IriusRisk On-Premise Interactive Setup Wizard"
+echo "--------------------------------------------"
 
 # —————————————————————————————————————————————————————————————
 # 0. Decide which container engine to use (passed-in or standalone)
 # —————————————————————————————————————————————————————————————
-if [[ -n "$CONTAINER_ENGINE" ]]; then
-    ENGINE="$CONTAINER_ENGINE"
-    echo "Using container engine: $ENGINE"
-else
-    ENGINE=$(prompt_engine "Which container engine should we configure?")
-    export CONTAINER_ENGINE="$ENGINE"
-    echo "→ Selected container engine: $ENGINE"
-fi
+prompt_engine
 
 # —————————————————————————————————————————————————————————————
 # 1. Set override & SAML-file paths once, for downstream logic

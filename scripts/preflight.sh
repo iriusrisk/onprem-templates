@@ -1,105 +1,11 @@
 #!/usr/bin/env bash
-
-# —————————————————————————————————————————————————————————————
-# Print header
-# —————————————————————————————————————————————————————————————
-function print_header() {
-    echo "IriusRisk On-Prem Preflight Check"
-    echo "----------------------------------"
-}
-
-# —————————————————————————————————————————————————————————————
-# Input validation functions
-# —————————————————————————————————————————————————————————————
-
-function prompt_yn() {
-    while true; do
-        read -rp "$1 (y/n): " yn
-        yn=${yn,,}
-        case "$yn" in
-            y|yes) echo "y"; return 0 ;;
-            n|no)  echo "n"; return 0 ;;
-            *)     echo "Invalid input: '$yn'. Please enter 'y' or 'n'." ;;
-        esac
-    done
-}
-
-function prompt_engine() {
-    while true; do
-        read -rp "Which container engine do you want to use? (docker/podman): " engine
-        engine=${engine,,}
-        case "$engine" in
-            docker|podman)
-                echo "$engine"
-                return 0
-                ;;
-            *)
-                echo "Invalid input: '$engine'. Please enter 'docker' or 'podman'."
-                ;;
-        esac
-    done
-}
-
-# —————————————————————————————————————————————————————————————
-# Version and file check utilities
-# —————————————————————————————————————————————————————————————
-function trim() {
-    local var="$*"
-    var="${var#"${var%%[![:space:]]*}"}"
-    var="${var%"${var##*[![:space:]]}"}"
-    echo -n "$var"
-}
-
-function check_command() {
-    if ! command -v "$1" &>/dev/null; then
-        msg="ERROR: '$1' is not installed."
-        echo "$msg"
-        ERRORS+=("$msg")
-        return 1
-    fi
-    return 0
-}
-
-function check_version() {
-    local cmd=$1
-    local required=$2
-    local actual=$($cmd --version | grep -oE "[0-9]+(\.[0-9]+)+" | head -1)
-    if [[ -z "$actual" ]]; then
-        msg="ERROR: Could not detect version for $cmd"
-        echo "$msg"
-        ERRORS+=("$msg")
-        return 1
-    fi
-    if [[ "$(printf '%s\n' "$required" "$actual" | sort -V | head -n1)" != "$required" ]]; then
-        msg="ERROR: $cmd version $required+ required, found $actual"
-        echo "$msg"
-        ERRORS+=("$msg")
-        return 1
-    fi
-    echo "$cmd version $actual OK"
-    return 0
-}
-
-function check_file() {
-    if [[ ! -f "$1" ]]; then
-        msg="ERROR: Required file '$1' not found."
-        echo "$msg"
-        ERRORS+=("$msg")
-        return 1
-    fi
-    echo "Found file: $1"
-    return 0
-}
-
-function is_rhel_like() {
-    source /etc/os-release
-    [[ "$ID_LIKE" == *rhel* ]] || [[ "$ID_LIKE" == *fedora* ]] || [[ "$ID" == "fedora" ]] || [[ "$ID" == "centos" ]] || [[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] || [[ "$ID" == "almalinux" ]]
-}
+source functions.sh
 
 # —————————————————————————————————————————————————————————————
 # Start of main script logic
 # —————————————————————————————————————————————————————————————
-print_header
+echo "IriusRisk On-Prem Preflight Check"
+echo "----------------------------------"
 
 REQUIRED_DOCKER="20.10.0"
 REQUIRED_DOCKER_COMPOSE="1.29.0"
@@ -111,7 +17,6 @@ WARNINGS=()
 
 OVERRIDE_FILE=""
 SAML_FILE=""
-
 
 # —————————————————————————————————————————————————————————————
 # 0. SAML setup
@@ -127,25 +32,7 @@ fi
 # —————————————————————————————————————————————————————————————
 # 1. Decide on container engine
 # —————————————————————————————————————————————————————————————
-if is_rhel_like; then
-    # Only prompt if Red Hat-like
-    if [[ -z "$CONTAINER_ENGINE" ]]; then
-        while true; do
-            read -rp "Which container engine do you want to use for deployment? (docker/podman): " engine
-            engine=${engine,,}
-            case "$engine" in
-                docker|podman) CONTAINER_ENGINE="$engine"; break ;;
-                *) echo "Invalid input: '$engine'. Please enter 'docker' or 'podman'." ;;
-            esac
-        done
-    fi
-else
-    # Always use Docker on non-RedHat-like systems
-    CONTAINER_ENGINE="docker"
-    echo "Defaulting to Docker on this system (CONTAINER_ENGINE=docker)"
-fi
-
-export CONTAINER_ENGINE
+prompt_engine
 
 # —————————————————————————————————————————————————————————————
 # 2. Check OS type

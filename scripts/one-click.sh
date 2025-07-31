@@ -143,13 +143,24 @@ case "$CONTAINER_ENGINE" in
         echo
         echo "Deploying with Docker Compose..."
         cd ../docker
-        
+
+        if [ "$(docker-compose -f docker-compose.yml -f docker-compose.override.yml ps -q)" ]; then
+            echo "Cleaning up existing containers for this project..."
+            docker-compose -f docker-compose.yml -f docker-compose.override.yml down --volumes --remove-orphans
+        fi
+
         docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
         ;;
     podman)
         echo
         echo "Deploying with Podman Compose..."
         cd ../podman
+
+        if [ "$(podman-compose -f container-compose.yml -f container-compose.override.yml ps -q)" ]; then
+            echo "Cleaning up existing containers for this project..."
+            podman-compose -f container-compose.yml -f container-compose.override.yml down --volumes --remove-orphans
+        fi
+
         podman-compose -f container-compose.yml -f container-compose.override.yml up -d
         ;;
     *)

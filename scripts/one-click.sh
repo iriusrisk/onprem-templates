@@ -59,6 +59,14 @@ fi
 if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
     if ! command -v docker &>/dev/null; then
         install_docker
+        # Prompt for user to add to docker group
+        DOCKER_USER=$(prompt_for_docker_user)
+        if ! id -nG "$DOCKER_USER" | grep -qw docker; then
+            echo "Adding $DOCKER_USER to docker group..."
+            sudo usermod -aG docker "$DOCKER_USER"
+            echo "Added $DOCKER_USER to docker group."
+            echo "Please log out and back in for the group change to take effect."
+        fi
     fi
 elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
     if ! command -v podman &>/dev/null; then
@@ -138,30 +146,60 @@ container_registry_login "$CONTAINER_ENGINE"
 # —————————————————————————————————————————————————————————————
 # 8. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
+DEPLOY_CMD=""
+case "$CONTAINER_ENGINE" in
+    docker)
+        DEPLOY_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d"
+        ;;
+    podman)
+        DEPLOY_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml up -d"
+        ;;
+    *)
+        echo "Unknown engine: $CONTAINER_ENGINE"
+        exit 1
+        ;;
+esac
+
 case "$CONTAINER_ENGINE" in
     docker)
         echo
         echo "Deploying with Docker Compose..."
         cd ../docker
 
-        if [ "$(docker-compose -f docker-compose.yml -f docker-compose.override.yml ps -q)" ]; then
+        CLEAN_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml down --volumes --remove-orphans"
+        UP_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d"
+        PS_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml ps -q"
+
+        if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
-            docker-compose -f docker-compose.yml -f docker-compose.override.yml down --volumes --remove-orphans
+            if id -nG "$DOCKER_USER" | grep -qw docker; then
+                eval "$CLEAN_CMD"
+            else
+                sg docker -c "cd $(pwd) && $CLEAN_CMD"
+            fi
         fi
 
-        docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
+        if id -nG "$DOCKER_USER" | grep -qw docker; then
+            eval "$UP_CMD"
+        else
+            sg docker -c "cd $(pwd) && $UP_CMD"
+        fi
         ;;
     podman)
         echo
         echo "Deploying with Podman Compose..."
         cd ../podman
 
-        if [ "$(podman-compose -f container-compose.yml -f container-compose.override.yml ps -q)" ]; then
+        CLEAN_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml down --volumes --remove-orphans"
+        UP_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml up -d"
+        PS_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml ps -q"
+
+        if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
-            podman-compose -f container-compose.yml -f container-compose.override.yml down --volumes --remove-orphans
+            eval "$CLEAN_CMD"
         fi
 
-        podman-compose -f container-compose.yml -f container-compose.override.yml up -d
+        eval "$UP_CMD"
         ;;
     *)
         echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2

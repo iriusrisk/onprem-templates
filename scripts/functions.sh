@@ -71,6 +71,15 @@ function prompt_registry_password() {
     echo
 }
 
+function prompt_for_docker_user() {
+    local uname
+    read -rp "Enter the username to add to the docker group (default: $USER): " uname
+    if [[ -z "$uname" ]]; then
+        uname="$USER"
+    fi
+    echo "$uname"
+}
+
 function prompt_nonempty() {
     # $1 = prompt
     local value

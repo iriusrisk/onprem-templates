@@ -166,6 +166,10 @@ case "$CONTAINER_ENGINE" in
         echo "Deploying with Docker Compose..."
         cd ../docker
 
+        if [[ -z "$DOCKER_USER" ]]; then
+            DOCKER_USER="$USER"
+        fi
+
         CLEAN_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml down --volumes --remove-orphans"
         UP_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d"
         PS_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml ps -q"

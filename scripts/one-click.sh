@@ -57,15 +57,27 @@ if ! command -v jq &>/dev/null; then
 fi
 
 if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+    # Ensure Docker is installed
     if ! command -v docker &>/dev/null; then
         install_docker
-        # Prompt for user to add to docker group
+    fi
+
+    # Check if current user is in docker group
+    if id -nG "$USER" | grep -qw docker; then
+        DOCKER_USER="$USER"
+    else
+        # Not in group: prompt for username to add
         DOCKER_USER=$(prompt_for_docker_user)
+        if ! id "$DOCKER_USER" &>/dev/null; then
+            echo "User '$DOCKER_USER' does not exist."
+            exit 1
+        fi
         if ! id -nG "$DOCKER_USER" | grep -qw docker; then
             echo "Adding $DOCKER_USER to docker group..."
             sudo usermod -aG docker "$DOCKER_USER"
             echo "Added $DOCKER_USER to docker group."
-            echo "Please log out and back in for the group change to take effect."
+            echo "You may need to log out and back in for the group change to take effect, "
+            echo "or deployment steps will attempt to use the group automatically via 'sg docker'."
         fi
     fi
 elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then

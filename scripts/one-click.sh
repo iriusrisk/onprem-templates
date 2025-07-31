@@ -158,20 +158,6 @@ container_registry_login "$CONTAINER_ENGINE"
 # —————————————————————————————————————————————————————————————
 # 8. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
-DEPLOY_CMD=""
-case "$CONTAINER_ENGINE" in
-    docker)
-        DEPLOY_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d"
-        ;;
-    podman)
-        DEPLOY_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml up -d"
-        ;;
-    *)
-        echo "Unknown engine: $CONTAINER_ENGINE"
-        exit 1
-        ;;
-esac
-
 case "$CONTAINER_ENGINE" in
     docker)
         echo

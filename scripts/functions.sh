@@ -163,13 +163,11 @@ function install_and_configure_postgres() {
 
     if command -v apt-get &>/dev/null; then
         sudo apt-get update
-        sudo apt-get install -y wget ca-certificates
-        # Add PGDG repo if not present
-        if ! grep -q "apt.postgresql.org" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then
-            wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/trusted.gpg.d/postgresql.asc >/dev/null
-            echo "deb http://apt.postgresql.org/pub/repos/apt/ jammy-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-            sudo apt-get update
-        fi
+        sudo apt-get install dirmngr ca-certificates software-properties-common apt-transport-https lsb-release curl -y
+        # Add PGDG repo
+        curl -fSsL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /usr/share/keyrings/postgresql.gpg > /dev/null
+        echo deb [arch=amd64,arm64,ppc64el signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main | sudo tee /etc/apt/sources.list.d/postgresql.list
+        sudo apt update
         sudo apt-get install -y postgresql-15 postgresql-client-15 postgresql-contrib
         PG_VERSION=15
         PG_CONF="/etc/postgresql/$PG_VERSION/main/postgresql.conf"

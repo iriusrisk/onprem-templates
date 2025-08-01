@@ -174,18 +174,10 @@ case "$CONTAINER_ENGINE" in
 
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
-            if id -nG "$DOCKER_USER" | grep -qw docker; then
-                eval "$CLEAN_CMD"
-            else
-                sg docker -c "cd $(pwd) && $CLEAN_CMD"
-            fi
+            sg docker -c "cd $(pwd) && $CLEAN_CMD"
         fi
 
-        if id -nG "$DOCKER_USER" | grep -qw docker; then
-            eval "$UP_CMD"
-        else
-            sg docker -c "cd $(pwd) && $UP_CMD"
-        fi
+        sg docker -c "cd $(pwd) && $UP_CMD"
         ;;
     podman)
         echo

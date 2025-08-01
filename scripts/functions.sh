@@ -104,10 +104,6 @@ function install_docker() {
         sudo apt-get install -y docker.io docker-compose
         sudo systemctl start docker
         sudo systemctl enable docker
-    elif command -v yum &>/dev/null; then
-        sudo yum install -y docker docker-compose
-        sudo systemctl start docker
-        sudo systemctl enable docker
     elif command -v dnf &>/dev/null; then
         sudo dnf install -y docker docker-compose
         sudo systemctl start docker
@@ -120,7 +116,8 @@ function install_docker() {
 
 function install_podman() {
     echo "Installing Podman and podman-compose..."
-    sudo dnf install -y container-tools podman-compose || sudo yum install -y container-tools podman-compose
+    sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+    sudo dnf install -y container-tools podman-compose
 }
 
 function install_git() {
@@ -128,8 +125,8 @@ function install_git() {
     if command -v apt-get &>/dev/null; then
         sudo apt-get update
         sudo apt-get install -y git
-    elif command -v yum &>/dev/null; then
-        sudo yum install -y git
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y git
     else
         echo "Please install git manually." >&2
         exit 1
@@ -141,8 +138,8 @@ function install_java() {
     if command -v apt-get &>/dev/null; then
         sudo apt-get update
         sudo apt-get install -y openjdk-17-jre-headless
-    elif command -v yum &>/dev/null; then
-        sudo yum install -y java-17-openjdk
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y java-17-openjdk
     else
         echo "Please install Java 17 manually." >&2
         exit 1
@@ -189,10 +186,9 @@ function install_and_configure_postgres() {
         sudo systemctl start postgresql
     elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
         # (your existing RHEL logic here)
-        sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm || \
-        sudo yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-        sudo dnf -qy module disable postgresql || sudo yum -qy module disable postgresql
-        sudo dnf install -y postgresql15-server || sudo yum install -y postgresql15-server
+        sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+        sudo dnf -qy module disable postgresql
+        sudo dnf install -y postgresql15-server
         PG_CONF="/var/lib/pgsql/15/data/postgresql.conf"
         PG_HBA="/var/lib/pgsql/15/data/pg_hba.conf"
         sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
@@ -236,8 +232,6 @@ function install_jq() {
         sudo apt-get install -y jq
     elif command -v dnf &>/dev/null; then
         sudo dnf install -y jq
-    elif command -v yum &>/dev/null; then
-        sudo yum install -y jq
     else
         echo "Please install jq manually." >&2
         exit 1

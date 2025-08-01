@@ -190,7 +190,7 @@ function install_and_configure_postgres() {
         PG_CONF="/var/lib/pgsql/15/data/postgresql.conf"
         PG_HBA="/var/lib/pgsql/15/data/pg_hba.conf"
         # Only run initdb if data directory is empty
-        if [ ! -f "$PG_CONF" ]; then
+        if ! sudo test -f "$PG_CONF"; then
             echo "Initializing PostgreSQL database (initdb)..."
             sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
         else

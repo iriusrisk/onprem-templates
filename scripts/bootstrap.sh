@@ -10,6 +10,21 @@ echo "== IriusRisk Bootstrap =="
 echo "Repo:    $REPO_URL"
 echo "Branch:  $BRANCH"
 
+if command -v git &>/dev/null; then
+    echo "git found."
+else
+    echo "git not found. Installing..."
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y git
+    elif command -v yum &>/dev/null; then
+        sudo yum install -y git
+    else
+        echo "Please install git manually." >&2
+        exit 1
+    fi
+fi
+
 # Clone if missing, otherwise update
 if [[ ! -d "$REPO_DIR" ]]; then
     echo "Cloning repo $REPO_URL (branch: $BRANCH)..."

@@ -171,8 +171,9 @@ case "$CONTAINER_ENGINE" in
         CLEAN_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml down --volumes --remove-orphans"
         UP_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d"
         PS_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml ps -q"
+        PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
 
-        if [ "$($PS_CMD)" ]; then
+        if [[ -n "$PS_OUTPUT" ]]; then
             echo "Cleaning up existing containers for this project..."
             sg docker -c "cd $(pwd) && $CLEAN_CMD"
         fi

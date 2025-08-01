@@ -117,7 +117,7 @@ function install_docker() {
 function install_podman() {
     echo "Installing Podman and podman-compose..."
     sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-    sudo dnf install -y container-tools podman-compose
+    sudo dnf install -y container-tools podman-compose python3-dotenv
 }
 
 function install_git() {
@@ -175,23 +175,27 @@ function install_and_configure_postgres() {
         echo deb [arch=amd64,arm64,ppc64el signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main | sudo tee /etc/apt/sources.list.d/postgresql.list
         sudo apt update
         sudo apt-get install -y postgresql-15 postgresql-client-15 postgresql-contrib
-        PG_VERSION=15
-        PG_CONF="/etc/postgresql/$PG_VERSION/main/postgresql.conf"
-        PG_HBA="/etc/postgresql/$PG_VERSION/main/pg_hba.conf"
+        PG_CONF="/etc/postgresql/15/main/postgresql.conf"
+        PG_HBA="/etc/postgresql/15/main/pg_hba.conf"
         if [[ ! -f "$PG_CONF" ]]; then
             echo "ERROR: Postgres 15 config not found at $PG_CONF! Install may have failed." >&2
             exit 1
         fi
         sudo systemctl enable postgresql
         sudo systemctl start postgresql
-    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-        # (your existing RHEL logic here)
+    elif command -v dnf &>/dev/null; then
         sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
         sudo dnf -qy module disable postgresql
         sudo dnf install -y postgresql15-server
         PG_CONF="/var/lib/pgsql/15/data/postgresql.conf"
         PG_HBA="/var/lib/pgsql/15/data/pg_hba.conf"
-        sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
+        # Only run initdb if data directory is empty
+        if [ ! -f "$PG_CONF" ]; then
+            echo "Initializing PostgreSQL database (initdb)..."
+            sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
+        else
+            echo "PostgreSQL already initialized at $PG_CONF"
+        fi
         sudo systemctl enable postgresql-15
         sudo systemctl start postgresql-15
     else

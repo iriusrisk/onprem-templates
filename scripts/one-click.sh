@@ -199,10 +199,11 @@ case "$CONTAINER_ENGINE" in
             COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
         fi
 
-        POD_NAME="iriusrisk"
-        CLEAN_CMD="PODMAN_POD_NAME=$POD_NAME sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
-        UP_CMD="PODMAN_POD_NAME=$POD_NAME sudo podman-compose $COMPOSE_OVERRIDE up -d"
-        PS_CMD="PODMAN_POD_NAME=$POD_NAME sudo podman-compose $COMPOSE_OVERRIDE ps -q"
+        # Always use the known pod name from podman-compose
+        POD_NAME="pod_podman"
+        CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
+        UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
+        PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
@@ -236,10 +237,6 @@ EOF
         sudo systemctl start pod-${POD_NAME}.service
 
         echo "Podman pod Quadlet systemd service created and enabled: pod-${POD_NAME}.service"
-        ;;
-    *)
-        echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
-        exit 1
         ;;
 esac
 

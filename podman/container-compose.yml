@@ -7,7 +7,9 @@ networks:
 services:
 
   nginx:
-    pod: pod_podman
+    ports:
+      - "80:80"
+      - "443:443"
     image: localhost/nginx-rhel
     container_name: iriusrisk-nginx
     networks:
@@ -19,7 +21,6 @@ services:
       - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:z"
 
   tomcat:
-    pod: pod_podman
     environment:
       - IRIUS_EDITION=saas
       - grails_env=production
@@ -33,7 +34,7 @@ services:
             -XX:MaxMetaspaceSize=2G
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
-    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
+    image: continuumsecurity/iriusrisk-prod:tomcat-4
     container_name: iriusrisk-tomcat
     networks:
       - iriusrisk-frontend
@@ -44,10 +45,9 @@ services:
       - "./ec_private.pem:/etc/irius/ec_private.pem:z"
 
   startleft:
-    pod: pod_podman
     environment:
       - IRIUS_SERVER=http://tomcat:8080
-    image: docker.io/continuumsecurity/iriusrisk-prod:startleft
+    image: continuumsecurity/iriusrisk-prod:startleft
     container_name: iriusrisk-startleft
     command: ["uvicorn", "startleft.startleft.api.fastapi_server:webapp", "--host", "0.0.0.0", "--port", "8081"]
     networks:
@@ -56,8 +56,9 @@ services:
     mem_limit: 2G
 
   reporting-module:
-    pod: pod_podman
-    image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+    image: continuumsecurity/iriusrisk-prod:reporting-module
     container_name: reporting-module
     networks:
       - iriusrisk-backend
+    ports:
+      - '3000:3000'

@@ -199,7 +199,6 @@ case "$CONTAINER_ENGINE" in
             COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
         fi
 
-        POD_NAME="pod_podman"
         CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
         UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
         PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
@@ -209,10 +208,6 @@ case "$CONTAINER_ENGINE" in
             echo "Cleaning up existing containers for this project..."
             eval "$CLEAN_CMD"
         fi
-        sudo podman pod rm -f $POD_NAME || true
-
-        # Create the pod with an infra container and necessary ports
-        sudo podman pod create --name $POD_NAME --infra --publish 80:80 --publish 443:443 --publish 3000:3000
 
         # Run the temporary container to perform modifications (nginx capabilities fix)
         sudo podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
@@ -228,18 +223,43 @@ case "$CONTAINER_ENGINE" in
         sudo podman rm temp-nginx
         echo "Custom Nginx image created as localhost/nginx-rhel"
 
-        # Bring up containers, which will join the existing pod
+        # Bring up containers
         eval "$UP_CMD"
 
-        # -- SYSTEMD autostart for the pod --
-        sudo podman generate systemd --name $POD_NAME --files --restart-policy=always
-        sudo mv pod-$POD_NAME.service /etc/systemd/system/
-        sudo /sbin/restorecon -v /etc/systemd/system/pod-$POD_NAME.service
-        sudo systemctl daemon-reload
-        sudo systemctl enable pod-$POD_NAME.service
-        sudo systemctl start pod-$POD_NAME.service
+        containers=(iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module)
 
-        echo "Podman pod systemd service created and enabled: pod-$POD_NAME.service"
+        # Generate systemd unit files
+        for cname in "${containers[@]}"; do
+            sudo podman generate systemd --name "$cname" --files --restart-policy=always
+        done
+
+        # Move, relabel, and modify service files as needed
+        for cname in "${containers[@]}"; do
+            svc="container-$cname.service"
+
+            # If nginx, add dependency on tomcat before moving
+            if [[ "$cname" == "iriusrisk-nginx" ]]; then
+                # Insert After= dependency if not already present
+                if ! grep -q '^After=container-iriusrisk-tomcat.service' "$svc"; then
+                    sudo sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
+                fi
+            fi
+
+            # Move and relabel
+            sudo mv "$svc" /etc/systemd/system/
+            sudo /sbin/restorecon -v /etc/systemd/system/"$svc"
+        done
+
+        # Now reload systemd units
+        sudo systemctl daemon-reload
+
+        # Enable and start services
+        for cname in "${containers[@]}"; do
+            svc="container-$cname.service"
+            sudo systemctl enable "$svc"
+            sudo systemctl start "$svc"
+        done
+        echo "Podman systemd services created and enabled"
         ;;
     *)
         echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2

@@ -219,10 +219,25 @@ case "$CONTAINER_ENGINE" in
             localhost/nginx-rhel
 
         sudo podman rm temp-nginx
-
         echo "Custom Nginx image created as localhost/nginx-rhel"
 
+        # --- Quadlet section ---
+        POD_NAME="iriusrisk"
+        export PODMAN_POD_NAME="$POD_NAME"
         eval "$UP_CMD"
+        echo "Creating Quadlet file to enable pod autostart..."
+        
+        sudo tee /etc/containers/systemd/${POD_NAME}.pod > /dev/null <<EOF
+[Pod]
+Name=${POD_NAME}
+Restart=always
+EOF
+
+        sudo systemctl daemon-reload
+        sudo systemctl enable pod-${POD_NAME}.service
+        sudo systemctl start pod-${POD_NAME}.service
+
+        echo "Podman pod Quadlet systemd service created and enabled: pod-${POD_NAME}.service"
         ;;
     *)
         echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2

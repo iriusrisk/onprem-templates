@@ -8,9 +8,6 @@ services:
 
   nginx:
     pod: pod_podman
-    ports:
-      - "80:80"
-      - "443:443"
     image: localhost/nginx-rhel
     container_name: iriusrisk-nginx
     networks:
@@ -66,5 +63,3 @@ services:
     container_name: reporting-module
     networks:
       - iriusrisk-backend
-    ports:
-      - '3000:3000'

@@ -324,7 +324,7 @@ function container_registry_login() {
     local engine="$1"
     local registry_url="${2:-}"
 
-    if is_logged_in_as_iriusrisk; then
+    if is_logged_in_as_iriusrisk $engine; then
         echo "Already logged in to Docker Hub as 'iriusrisk', skipping login prompt."
         return 0
     fi

@@ -185,7 +185,6 @@ case "$CONTAINER_ENGINE" in
         echo "Deploying with Podman Compose..."
         cd ../podman
 
-        CONTAINER_ID=$(sudo podman create --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx)
         CLEAN_CMD="sudo podman-compose -f container-compose.yml -f container-compose.override.yml down --volumes --remove-orphans"
         UP_CMD="sudo podman-compose -f container-compose.yml -f container-compose.override.yml up -d"
         PS_CMD="sudo podman-compose -f container-compose.yml -f container-compose.override.yml ps -q"
@@ -195,15 +194,18 @@ case "$CONTAINER_ENGINE" in
             eval "$CLEAN_CMD"
         fi
 
-        sudo podman start "$CONTAINER_ID"
-        sudo podman exec "$CONTAINER_ID" apk add libcap
-        sudo podman exec "$CONTAINER_ID" setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx
+        # Run the temporary container to perform modifications
+        sudo podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx -c "apk add libcap && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx && sleep 1"
+
+        # Commit the changes to a new image
         sudo podman commit \
             --change='USER nginx' \
-            --change='ENTRYPOINT [\"nginx\", \"-g\", \"daemon off;\"]' \
-            "$CONTAINER_ID" \
+            --change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
+            temp-nginx \
             localhost/nginx-rhel
-        sudo podman rm "$CONTAINER_ID"
+
+        # Remove the temporary container
+        sudo podman rm temp-nginx
 
         echo "Custom Nginx image created as localhost/nginx-rhel"
 

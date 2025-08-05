@@ -7,6 +7,7 @@ networks:
 services:
 
   nginx:
+    pod: pod_podman
     ports:
       - "80:80"
       - "443:443"
@@ -22,6 +23,7 @@ services:
       - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:z"
 
   tomcat:
+    pod: pod_podman
     environment:
       - IRIUS_EDITION=saas
       - grails_env=production
@@ -46,6 +48,7 @@ services:
       - "./ec_private.pem:/etc/irius/ec_private.pem:z"
 
   startleft:
+    pod: pod_podman
     environment:
       - IRIUS_SERVER=http://tomcat:8080
     image: docker.io/continuumsecurity/iriusrisk-prod:startleft
@@ -58,6 +61,7 @@ services:
     restart: unless-stopped
 
   reporting-module:
+    pod: pod_podman
     image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
     container_name: reporting-module
     networks:

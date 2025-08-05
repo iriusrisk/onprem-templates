@@ -199,19 +199,24 @@ case "$CONTAINER_ENGINE" in
             COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
         fi
 
-        # Always use the known pod name from podman-compose
         POD_NAME="pod_podman"
         CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
         UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
         PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
+        # Clean up any existing containers and pod
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
             eval "$CLEAN_CMD"
         fi
+        sudo podman pod rm -f $POD_NAME || true
+
+        # Create the pod with an infra container and necessary ports
+        sudo podman pod create --name $POD_NAME --infra --publish 80:80 --publish 443:443 --publish 3000:3000
 
         # Run the temporary container to perform modifications (nginx capabilities fix)
-        sudo podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx -c "apk add libcap && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx && sleep 1"
+        sudo podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
+            -c "apk add libcap && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx && sleep 1"
 
         # Commit the changes to a new image
         sudo podman commit \
@@ -223,6 +228,7 @@ case "$CONTAINER_ENGINE" in
         sudo podman rm temp-nginx
         echo "Custom Nginx image created as localhost/nginx-rhel"
 
+        # Bring up containers, which will join the existing pod
         eval "$UP_CMD"
 
         echo "Creating Quadlet file to enable pod autostart..."
@@ -237,6 +243,10 @@ EOF
         sudo systemctl start pod-${POD_NAME}.service
 
         echo "Podman pod Quadlet systemd service created and enabled: pod-${POD_NAME}.service"
+        ;;
+    *)
+        echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
+        exit 1
         ;;
 esac
 

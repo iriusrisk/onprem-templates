@@ -299,7 +299,8 @@ function container_registry_login() {
     if [[ "$engine" == "docker" ]]; then
         echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
     elif [[ "$engine" == "podman" ]]; then
-        echo "$REGISTRY_PASS" | podman login -u iriusrisk --password-stdin
+        sudo su -
+        echo "$REGISTRY_PASS" | podman login -u iriusrisk docker.io --password-stdin
     else
         echo "Unknown container engine: $engine" >&2
         return 1

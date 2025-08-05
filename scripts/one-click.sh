@@ -184,7 +184,8 @@ case "$CONTAINER_ENGINE" in
         echo
         echo "Deploying with Podman Compose..."
         cd ../podman
-
+        
+        CONTAINER_ID=$(podman create --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx)
         CLEAN_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml down --volumes --remove-orphans"
         UP_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml up -d"
         PS_CMD="podman-compose -f container-compose.yml -f container-compose.override.yml ps -q"
@@ -194,7 +195,20 @@ case "$CONTAINER_ENGINE" in
             eval "$CLEAN_CMD"
         fi
 
+        podman start "$CONTAINER_ID"
+        podman exec "$CONTAINER_ID" apk add libcap
+        podman exec "$CONTAINER_ID" setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx
+        podman commit \
+        --change='USER nginx' \
+        --change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
+        "$CONTAINER_ID" \
+        localhost/nginx-rhel
+        podman rm "$CONTAINER_ID"
+
+        echo "Custom Nginx image created as localhost/nginx-rhel"
+
         eval "$UP_CMD"
+        exit
         ;;
     *)
         echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2

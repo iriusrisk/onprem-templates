@@ -231,19 +231,14 @@ case "$CONTAINER_ENGINE" in
         # Bring up containers, which will join the existing pod
         eval "$UP_CMD"
 
-        echo "Creating Quadlet file to enable pod autostart..."
-        sudo tee /etc/containers/systemd/${POD_NAME}.pod > /dev/null <<EOF
-[Pod]
-Name=${POD_NAME}
-Restart=always
-EOF
+    # -- SYSTEMD autostart for the pod --
+    sudo podman generate systemd --name $POD_NAME --files --restart-policy=always
+    sudo mv pod-$POD_NAME.service /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable pod-$POD_NAME.service
+    sudo systemctl start pod-$POD_NAME.service
 
-        sudo systemctl daemon-reload
-        sudo systemctl enable pod-${POD_NAME}.service
-        sudo systemctl start pod-${POD_NAME}.service
-
-        echo "Podman pod Quadlet systemd service created and enabled: pod-${POD_NAME}.service"
-        ;;
+    echo "Podman pod systemd service created and enabled: pod-$POD_NAME.service"
     *)
         echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
         exit 1

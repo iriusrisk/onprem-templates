@@ -14,7 +14,6 @@ services:
       - iriusrisk-frontend
     mem_reservation: 50M
     mem_limit: 200M
-    restart: unless-stopped
     volumes:
       - "./cert.pem:/etc/nginx/ssl/star_iriusrisk_com.crt:z"
       - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:z"
@@ -55,7 +54,6 @@ services:
       - iriusrisk-backend
     mem_reservation: 1G
     mem_limit: 2G
-    restart: unless-stopped
 
   reporting-module:
     pod: pod_podman

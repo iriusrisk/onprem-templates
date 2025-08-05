@@ -199,9 +199,10 @@ case "$CONTAINER_ENGINE" in
             COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
         fi
 
-        CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
-        UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
-        PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
+        POD_NAME="iriusrisk"
+        CLEAN_CMD="PODMAN_POD_NAME=$POD_NAME sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
+        UP_CMD="PODMAN_POD_NAME=$POD_NAME sudo podman-compose $COMPOSE_OVERRIDE up -d"
+        PS_CMD="PODMAN_POD_NAME=$POD_NAME sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
@@ -221,12 +222,9 @@ case "$CONTAINER_ENGINE" in
         sudo podman rm temp-nginx
         echo "Custom Nginx image created as localhost/nginx-rhel"
 
-        # --- Quadlet section ---
-        POD_NAME="iriusrisk"
-        export PODMAN_POD_NAME="$POD_NAME"
         eval "$UP_CMD"
+
         echo "Creating Quadlet file to enable pod autostart..."
-        
         sudo tee /etc/containers/systemd/${POD_NAME}.pod > /dev/null <<EOF
 [Pod]
 Name=${POD_NAME}

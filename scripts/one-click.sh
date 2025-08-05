@@ -234,8 +234,7 @@ case "$CONTAINER_ENGINE" in
         # -- SYSTEMD autostart for the pod --
         sudo podman generate systemd --name $POD_NAME --files --restart-policy=always
         sudo mv pod-$POD_NAME.service /etc/systemd/system/
-        sync
-        sleep 1
+        sudo /sbin/restorecon -v /etc/systemd/system/pod-$POD_NAME.service
         sudo systemctl daemon-reload
         sudo systemctl enable pod-$POD_NAME.service
         sudo systemctl start pod-$POD_NAME.service

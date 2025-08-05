@@ -168,9 +168,16 @@ case "$CONTAINER_ENGINE" in
             DOCKER_USER="$USER"
         fi
 
-        CLEAN_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml down --volumes --remove-orphans"
-        UP_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d"
-        PS_CMD="docker-compose -f docker-compose.yml -f docker-compose.override.yml ps -q"
+        # Compose override logic for SAML
+        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
+            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.saml.yml"
+        else
+            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml"
+        fi
+
+        CLEAN_CMD="docker-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
+        UP_CMD="docker-compose $COMPOSE_OVERRIDE up -d"
+        PS_CMD="docker-compose $COMPOSE_OVERRIDE ps -q"
         PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
 
         if [[ -n "$PS_OUTPUT" ]]; then
@@ -185,16 +192,23 @@ case "$CONTAINER_ENGINE" in
         echo "Deploying with Podman Compose..."
         cd ../podman
 
-        CLEAN_CMD="sudo podman-compose -f container-compose.yml -f container-compose.override.yml down --volumes --remove-orphans"
-        UP_CMD="sudo podman-compose -f container-compose.yml -f container-compose.override.yml up -d"
-        PS_CMD="sudo podman-compose -f container-compose.yml -f container-compose.override.yml ps -q"
+        # Compose override logic for SAML
+        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
+            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.saml.yml"
+        else
+            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
+        fi
+
+        CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
+        UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
+        PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
             eval "$CLEAN_CMD"
         fi
 
-        # Run the temporary container to perform modifications
+        # Run the temporary container to perform modifications (nginx capabilities fix)
         sudo podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx -c "apk add libcap && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx && sleep 1"
 
         # Commit the changes to a new image
@@ -204,7 +218,6 @@ case "$CONTAINER_ENGINE" in
             temp-nginx \
             localhost/nginx-rhel
 
-        # Remove the temporary container
         sudo podman rm temp-nginx
 
         echo "Custom Nginx image created as localhost/nginx-rhel"

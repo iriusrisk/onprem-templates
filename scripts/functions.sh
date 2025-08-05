@@ -28,21 +28,8 @@ function prompt_engine() {
         echo "Using container engine: $ENGINE"
     else
         if is_rhel_like; then
-            # Loop until a valid engine is chosen
-            while true; do
-                read -rp "Which container engine do you want to use for deployment? (docker/podman): " engine
-                engine=$(to_lower "$engine")
-                case "$engine" in
-                    docker|podman)
-                        ENGINE="$engine"
-                        echo "→ Selected container engine: $ENGINE"
-                        break
-                        ;;
-                    *)
-                        echo "Invalid input: '$engine'. Please enter 'docker' or 'podman'." >&2
-                        ;;
-                esac
-            done
+            echo "Only Podman is supported on your system. Using Podman."
+            ENGINE="podman"
         else
             echo "Only Docker is supported on your system. Using Docker."
             ENGINE="docker"

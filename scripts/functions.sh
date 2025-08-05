@@ -276,12 +276,47 @@ function ensure_certificates() {
 }
 
 function is_logged_in_as_iriusrisk() {
-    local config="$HOME/.docker/config.json"
+    local engine="$1"
+    local config=""
+    local auth_key=""
+    local auth_base64=""
+    local auth_user=""
+
+    if [[ "$engine" == "docker" ]]; then
+        config="$HOME/.docker/config.json"
+        auth_key="https://index.docker.io/v1/"
+    elif [[ "$engine" == "podman" ]]; then
+        # For root, Podman stores auth at /run/containers/0/auth.json
+        if sudo test -f /run/containers/0/auth.json; then
+            config="/run/containers/0/auth.json"
+            auth_key="docker.io"
+        else
+            # Non-root Podman: uses ~/.docker/config.json
+            config="$HOME/.docker/config.json"
+            auth_key="https://index.docker.io/v1/"
+        fi
+    else
+        echo "Unknown container engine: $engine" >&2
+        return 2
+    fi
+
     if [[ ! -f "$config" ]]; then
         return 1
     fi
-    local auth_user
-    auth_user=$(jq -r '.auths["https://index.docker.io/v1/"].auth // empty' "$config" 2>/dev/null | base64 -d 2>/dev/null | cut -d: -f1)
+
+    # Use sudo if needed
+    if [[ "$config" == "/run/containers/0/auth.json" ]]; then
+        auth_base64=$(sudo jq -r ".auths[\"$auth_key\"].auth // empty" "$config" 2>/dev/null)
+    else
+        auth_base64=$(jq -r ".auths[\"$auth_key\"].auth // empty" "$config" 2>/dev/null)
+    fi
+
+    if [[ -z "$auth_base64" ]]; then
+        return 1
+    fi
+
+    # Decode base64 and extract username
+    auth_user=$(echo "$auth_base64" | base64 -d 2>/dev/null | cut -d: -f1)
     [[ "$auth_user" == "iriusrisk" ]]
 }
 
@@ -299,8 +334,7 @@ function container_registry_login() {
     if [[ "$engine" == "docker" ]]; then
         echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
     elif [[ "$engine" == "podman" ]]; then
-        sudo su -
-        echo "$REGISTRY_PASS" | podman login -u iriusrisk docker.io --password-stdin
+        echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
     else
         echo "Unknown container engine: $engine" >&2
         return 1

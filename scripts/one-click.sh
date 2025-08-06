@@ -158,11 +158,25 @@ container_registry_login "$CONTAINER_ENGINE"
 # —————————————————————————————————————————————————————————————
 # 8. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
+DOCKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../docker && pwd)"
+PODMAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../podman && pwd)"
+
 case "$CONTAINER_ENGINE" in
     docker)
         echo
         echo "Deploying with Docker Compose..."
-        cd ../docker
+
+        DOCKER_COMPOSE_PATH="$(which docker-compose 2>/dev/null || true)"
+        if [[ -z "$DOCKER_COMPOSE_PATH" ]]; then
+            # If not found, try docker's builtin compose (for Docker 20.10+)
+            if docker compose version &>/dev/null; then
+                DOCKER_COMPOSE_PATH="docker compose"
+            else
+                echo "docker-compose not found!"
+                exit 1
+            fi
+        fi
+        cd "$DOCKER_DIR"
 
         if [[ -z "$DOCKER_USER" ]]; then
             DOCKER_USER="$USER"
@@ -176,7 +190,6 @@ case "$CONTAINER_ENGINE" in
         fi
 
         CLEAN_CMD="docker-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
-        UP_CMD="docker-compose $COMPOSE_OVERRIDE up -d"
         PS_CMD="docker-compose $COMPOSE_OVERRIDE ps -q"
         PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
 
@@ -185,12 +198,35 @@ case "$CONTAINER_ENGINE" in
             sg docker -c "cd $(pwd) && $CLEAN_CMD"
         fi
 
-        sg docker -c "cd $(pwd) && $UP_CMD"
+        # Dynamically write systemd unit file
+        SERVICE_NAME="iriusrisk-docker.service"
+
+        cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME
+[Unit]
+Description=IriusRisk Docker Compose Stack
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=$DOCKER_DIR
+ExecStart=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE up -d"
+ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+        # sudo /sbin/restorecon -v /etc/systemd/system/$SERVICE_NAME
+        sudo systemctl daemon-reload
+        sudo systemctl enable $SERVICE_NAME
+        sudo systemctl start $SERVICE_NAME
         ;;
     podman)
         echo
         echo "Deploying with Podman Compose..."
-        cd ../podman
+        cd "$PODMAN_DIR"
 
         # Compose override logic for SAML
         if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then

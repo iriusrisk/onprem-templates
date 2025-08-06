@@ -80,7 +80,7 @@ if [[ "$ENABLE_SAML" == "y" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Safely update override file
+# 4. Safely update override file & generate certificates
 # —————————————————————————————————————————————————————————————
 if [[ ! -f "$OVERRIDE_FILE" ]]; then
     echo "ERROR: $OVERRIDE_FILE not found. Please ensure you have cloned the repo and have the override template."
@@ -109,6 +109,8 @@ awk -v db_url="      - IRIUS_DB_URL=$JDBC_URL" '
 ' "$OVERRIDE_FILE" > "${OVERRIDE_FILE}.tmp" && mv "${OVERRIDE_FILE}.tmp" "$OVERRIDE_FILE"
 
 echo "Updated $OVERRIDE_FILE"
+
+ensure_certificates $HOST_NAME
 
 # —————————————————————————————————————————————————————————————
 # 5. Safely update SAML override if enabled

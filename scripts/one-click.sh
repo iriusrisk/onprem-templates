@@ -18,10 +18,9 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Pick your container engine and generate certificates
+# 1. Pick your container engine
 # —————————————————————————————————————————————————————————————
 prompt_engine
-ensure_certificates
 
 # —————————————————————————————————————————————————————————————
 # 2. SAML question early if needed (validate Y/N)

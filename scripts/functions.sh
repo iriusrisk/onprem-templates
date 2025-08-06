@@ -244,22 +244,17 @@ function ensure_certificates() {
     CERT_FILE="$CERT_DIR/cert.pem"
     KEY_FILE="$CERT_DIR/key.pem"
     EC_KEY_FILE="$CERT_DIR/ec_private.pem"
+    local hostname="${1:-$(hostname -f)}"
 
-    if [[ ! -f "$CERT_FILE" || ! -f "$KEY_FILE" ]]; then
-        echo "🔑 Generating RSA SSL certificate..."
-        openssl req -newkey rsa:2048 -nodes -keyout "$KEY_FILE" -x509 -days 365 -out "$CERT_FILE" -subj "/CN=$(hostname -f)"
-        chmod 644 "$CERT_FILE" "$KEY_FILE"
-    else
-        echo "🔑 SSL certificates already exist."
-    fi
+    echo "🔑 Generating RSA SSL certificate..."
+    openssl req -newkey rsa:2048 -nodes -keyout "$KEY_FILE" -x509 -days 365 -out "$CERT_FILE" -subj "/CN=$hostname"
+    chmod 644 "$CERT_FILE" "$KEY_FILE"
 
-    if [[ ! -f "$EC_KEY_FILE" ]]; then
-        echo "🔑 Generating EC private key..."
-        openssl ecparam -genkey -name prime256v1 -noout -out "$EC_KEY_FILE"
-        chmod 644 "$EC_KEY_FILE"
-    else
-        echo "🔑 EC private key already exists."
-    fi
+    echo "🔑 Generating EC private key..."
+    openssl ecparam -genkey -name prime256v1 -noout -out "$EC_KEY_FILE"
+    chmod 644 "$EC_KEY_FILE"
+    
+    echo "Certificates generated at $CERT_DIR"
 }
 
 function is_logged_in_as_iriusrisk() {

@@ -94,11 +94,17 @@ EOF
         | awk -F: '/^pub/ { print $5; exit }'
     )
 
-    # Now encrypt DB_IP to db_pwd.gpg
-    echo -n "${DB_IP}" \
+    # Now encrypt DB_PASS to db_pwd.gpg
+    echo -n "${DB_PASS}" \
     | gpg --batch --yes --encrypt \
             --recipient "${GPG_RECIPIENT}" \
             --output db_pwd.gpg
+
+    # Initialise the pass store if it doesn't exist
+    if [[ ! -d "$HOME/.password-store" ]]; then
+        echo "Initialising password store..."
+        pass init "${GPG_RECIPIENT}"
+    fi
 
     # Create the Podman secret with the pass driver
     sudo podman secret rm db_pwd 2>/dev/null || true

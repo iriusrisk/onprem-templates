@@ -315,6 +315,11 @@ function install_jq() {
     fi
 }
 
+function install_pass() {
+    echo "Installing pass (for password management)..."
+    sudo dnf install -y pass
+}
+
 # —————————————————————————————————————————————————————————————
 # Helper functions
 # —————————————————————————————————————————————————————————————

@@ -114,6 +114,13 @@ case "$CONTAINER_ENGINE" in
             echo "$msg"
             ERRORS+=("$msg")
         fi
+        if command -v pass &>/dev/null; then
+            echo "pass found."
+        else
+            msg="ERROR: pass not installed but required for Podman secrets."
+            echo "$msg"
+            ERRORS+=("$msg")
+        fi
         ;;
     *)
         msg="ERROR: Unknown container engine '$CONTAINER_ENGINE'"

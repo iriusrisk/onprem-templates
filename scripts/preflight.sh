@@ -193,6 +193,9 @@ if [[ -n "$OVERRIDE_FILE" && -f "$OVERRIDE_FILE" ]]; then
     else
         echo "IRIUS_DB_URL: $IRIUS_DB_URL"
     fi
+    if [[ "$CONTAINER_ENGINE" == podman ]]; then
+        export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DB_PASS}" 
+    fi
 else
     if [[ -n "$OVERRIDE_FILE" ]]; then
         msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"

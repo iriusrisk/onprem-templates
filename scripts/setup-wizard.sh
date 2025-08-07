@@ -100,7 +100,7 @@ EOF
             --recipient "${GPG_RECIPIENT}" \
             --output db_pwd.gpg
 
-    export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DB_PASS}" 
+    export DB_PASS=$DB_PASS
 
     # Create the Podman secret with the pass driver
     sudo podman secret rm db_pwd 2>/dev/null || true

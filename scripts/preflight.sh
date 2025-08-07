@@ -237,6 +237,15 @@ if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
         DB_IP="localhost"
     fi
 
+    if [[ "$CONTAINER_ENGINE" == podman ]]; then
+        # Before the connectivity check, grab the path to the mounted secret on the host:
+        SECRET_PATH=$(podman secret inspect db_pwd \
+        --format '{{range .}}{{.Spec.Source}}{{end}}')
+
+        # decrypt into DB_PASS
+        DB_PASS=$(gpg --batch --yes --decrypt "$SECRET_PATH")
+    fi
+
     if [[ -n "$DB_IP" && -n "$DB_PASS" ]]; then
         if command -v psql &>/dev/null; then
             if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then

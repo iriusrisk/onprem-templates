@@ -101,8 +101,8 @@ EOF
             --output db_pwd.gpg
 
     # Create the Podman secret with the pass driver
-    podman secret rm db_pwd 2>/dev/null || true
-    podman secret create --driver=pass db_pwd db_pwd.gpg
+    sudo podman secret rm db_pwd 2>/dev/null || true
+    sudo podman secret create --driver=pass db_pwd db_pwd.gpg
 
     # Remove the local .gpg after loading it into Podman
     rm db_pwd.gpg

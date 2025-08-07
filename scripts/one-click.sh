@@ -53,9 +53,6 @@ fi
 if echo "$PRE_ERRS" | grep -q "psql' client is not installed"; then
     install_psql
 fi
-if echo "$PRE_ERRS" | grep -q "pass not installed"; then
-    install_pass
-fi
 if ! command -v jq &>/dev/null; then
     install_jq
 fi

@@ -100,15 +100,9 @@ EOF
             --recipient "${GPG_RECIPIENT}" \
             --output db_pwd.gpg
 
-    # Initialise the pass store if it doesn't exist
-    if [[ ! -d "$HOME/.password-store" ]]; then
-        echo "Initialising password store..."
-        pass init "${GPG_RECIPIENT}"
-    fi
-
     # Create the Podman secret with the pass driver
     sudo podman secret rm db_pwd 2>/dev/null || true
-    sudo podman secret create --driver=pass db_pwd db_pwd.gpg
+    sudo podman secret create db_pwd db_pwd.gpg
 
     # Remove the local .gpg after loading it into Podman
     rm db_pwd.gpg

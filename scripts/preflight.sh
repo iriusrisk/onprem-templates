@@ -145,7 +145,7 @@ fi
 # —————————————————————————————————————————————————————————————
 echo "Checking required local certificate/key files..."
 for f in cert.pem key.pem ec_private.pem; do
-    check_file "../$CONTAINER_ENGINE/$f"
+    check_file "../container-compose/$f"
 done
 
 # —————————————————————————————————————————————————————————————

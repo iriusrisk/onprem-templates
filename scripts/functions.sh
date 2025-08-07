@@ -173,7 +173,7 @@ function install_and_configure_postgres() {
 
         # Teardown & cleanup Postgres container + data
             if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
-                sg docker -c "$COMPOSE_TOOL down --remove-orphans"
+                sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") down --remove-orphans"
                 sg docker -c '
                 ids=$(docker ps -aq --filter name=iriusrisk-postgres)
                 if [ -n "$ids" ]; then
@@ -184,7 +184,7 @@ function install_and_configure_postgres() {
                 sudo rm -rf ./postgres/data
                 sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d"
             elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-                $COMPOSE_TOOL down --remove-orphans
+                $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") down --remove-orphans
                 podman ps -aq --filter name=iriusrisk-postgres | xargs -r podman rm -f
                 sudo rm -rf ./postgres/data
                 $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d

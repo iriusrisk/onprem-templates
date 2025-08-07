@@ -24,18 +24,18 @@ function prompt_engine() {
 
     # If already set and valid, use it
     if [[ "$CONTAINER_ENGINE" =~ ^(docker|podman)$ ]]; then
-        ENGINE="$CONTAINER_ENGINE"
-        echo "Using container engine: $ENGINE"
+        CONTAINER_ENGINE="$CONTAINER_ENGINE"
+        echo "Using container engine: $CONTAINER_ENGINE"
     else
         if is_rhel_like; then
             echo "Only Podman is supported on your system. Using Podman."
-            ENGINE="podman"
+            CONTAINER_ENGINE="podman"
         else
             echo "Only Docker is supported on your system. Using Docker."
-            ENGINE="docker"
+            CONTAINER_ENGINE="docker"
         fi
     fi
-    export CONTAINER_ENGINE="$ENGINE"
+    export CONTAINER_ENGINE
 }
 
 function prompt_postgres_option() {
@@ -148,10 +148,11 @@ function install_psql() {
 
 function install_and_configure_postgres() {
     local mode="$1"      # "container" or "host"
-    local engine="$2"    # "docker" or "podman"
     PG_USER="iriusprod"
     PG_DB="iriusprod"
     PG_SUPERUSER="postgres"
+    POSTGRES_FILE="../container-compose/container-compose.postgres.yml"
+    CONTAINER_PATH="../container-compose"
 
     # Generate a password for the DB user
     DB_PASS=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20)
@@ -159,13 +160,9 @@ function install_and_configure_postgres() {
     if [[ "$mode" == "container" ]]; then
         # --- Containerized Postgres ---
         echo "Starting internal Postgres container..."
-        if [[ $engine == "docker" ]]; then
-            POSTGRES_FILE="../docker/docker-compose.postgres.yml"
-            CONTAINER_PATH="../docker"
+        if [[ $CONTAINER_ENGINE == "docker" ]]; then
             COMPOSE_TOOL="docker-compose"
-        elif [[ $engine == "podman" ]]; then
-            POSTGRES_FILE="../podman/container-compose.postgres.yml"
-            CONTAINER_PATH="../podman"
+        elif [[ $CONTAINER_ENGINE == "podman" ]]; then
             COMPOSE_TOOL="podman-compose"
         fi
 
@@ -174,40 +171,44 @@ function install_and_configure_postgres() {
         echo "Updated $POSTGRES_FILE"
         cd $CONTAINER_PATH
 
-        # Stop and clean old containers/volumes, deploy new container
-        if [[ $engine == "docker" ]]; then
-            sg docker -c "$COMPOSE_TOOL down --remove-orphans"
-            sudo rm -rf ./postgres/data
-            sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d"
-        elif [[ $engine == "podman" ]]; then
-            $COMPOSE_TOOL down --remove-orphans
-            sudo rm -rf ./postgres/data
-            $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d
-        fi
+        # Teardown & cleanup Postgres container + data
+            if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+                sg docker -c "$COMPOSE_TOOL down --remove-orphans"
+                sg docker -c '
+                ids=$(docker ps -aq --filter name=iriusrisk-postgres)
+                if [ -n "$ids" ]; then
+                    echo "Removing containers: $ids"
+                    docker rm -f $ids
+                fi
+                '
+                sudo rm -rf ./postgres/data
+                sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d"
+            elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+                $COMPOSE_TOOL down --remove-orphans
+                podman ps -aq --filter name=iriusrisk-postgres | xargs -r podman rm -f
+                sudo rm -rf ./postgres/data
+                $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d
+            fi
 
         # Wait for the container to be ready
         echo "Waiting for Postgres container to be ready..."
         timeout=60
-        until $engine exec iriusrisk-postgres pg_isready -U postgres; do
+        until $CONTAINER_ENGINE exec iriusrisk-postgres pg_isready -U postgres; do
             sleep 2
             ((timeout--))
             if [ $timeout -le 0 ]; then
                 echo "ERROR: Postgres container did not become ready in time."
-                $engine logs iriusrisk-postgres
+                $CONTAINER_ENGINE logs iriusrisk-postgres
             exit 1
         fi
         done
         echo "Postgres is ready!"
 
         # Drop DB and user if exist, then create them
-        if [[ $engine == "docker" ]]; then
-            sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"DROP DATABASE IF EXISTS \\\"$PG_DB\\\";\""
-            sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"DROP ROLE IF EXISTS $PG_USER;\""
+        if [[ $CONTAINER_ENGINE == "docker" ]]; then
             sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';\""
             sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE DATABASE $PG_DB WITH OWNER $PG_USER;\""
-        elif [[ $engine == "podman" ]]; then
-            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "DROP DATABASE IF EXISTS \"$PG_DB\";"
-            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "DROP ROLE IF EXISTS $PG_USER;"
+        elif [[ $CONTAINER_ENGINE == "podman" ]]; then
             podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';"
             podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
         fi
@@ -239,7 +240,7 @@ function install_and_configure_postgres() {
         && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP ROLE \"$PG_USER\";" 2>/dev/null \
         || echo "Role $PG_USER does not exist, skipping drop."
 
-        if [[ $engine == "docker" ]]; then
+        if [[ $CONTAINER_ENGINE == "docker" ]]; then
             sudo apt-get update
             sudo apt-get install dirmngr ca-certificates software-properties-common apt-transport-https lsb-release curl -y
             # Add PGDG repo
@@ -255,7 +256,7 @@ function install_and_configure_postgres() {
             fi
             sudo systemctl enable postgresql
             sudo systemctl start postgresql
-        elif [[ $engine == "podman" ]]; then
+        elif [[ $CONTAINER_ENGINE == "podman" ]]; then
             sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
             sudo dnf -qy module disable postgresql
             sudo dnf install -y postgresql15-server
@@ -325,7 +326,7 @@ function is_rhel_like() {
 
 
 function ensure_certificates() {
-    CERT_DIR="${CERT_DIR:-../$CONTAINER_ENGINE}"
+    CERT_DIR="${CERT_DIR:-../container-compose}"
     CERT_FILE="$CERT_DIR/cert.pem"
     KEY_FILE="$CERT_DIR/key.pem"
     EC_KEY_FILE="$CERT_DIR/ec_private.pem"
@@ -343,16 +344,15 @@ function ensure_certificates() {
 }
 
 function is_logged_in_as_iriusrisk() {
-    local engine="$1"
     local config=""
     local auth_key=""
     local auth_base64=""
     local auth_user=""
 
-    if [[ "$engine" == "docker" ]]; then
+    if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
         config="$HOME/.docker/config.json"
         auth_key="https://index.docker.io/v1/"
-    elif [[ "$engine" == "podman" ]]; then
+    elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
         # For root, Podman stores auth at /run/containers/0/auth.json
         if sudo test -f /run/containers/0/auth.json; then
             config="/run/containers/0/auth.json"
@@ -363,7 +363,7 @@ function is_logged_in_as_iriusrisk() {
             auth_key="https://index.docker.io/v1/"
         fi
     else
-        echo "Unknown container engine: $engine" >&2
+        echo "Unknown container engine: $CONTAINER_ENGINE" >&2
         return 2
     fi
 
@@ -388,22 +388,21 @@ function is_logged_in_as_iriusrisk() {
 }
 
 function container_registry_login() {
-    local engine="$1"
-    local registry_url="${2:-}"
+    local registry_url="${1:-}"
 
-    if is_logged_in_as_iriusrisk $engine; then
+    if is_logged_in_as_iriusrisk $CONTAINER_ENGINE; then
         echo "Already logged in to Docker Hub as 'iriusrisk', skipping login prompt."
         return 0
     fi
 
     prompt_registry_password
 
-    if [[ "$engine" == "docker" ]]; then
+    if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
         echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
-    elif [[ "$engine" == "podman" ]]; then
+    elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
         echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
     else
-        echo "Unknown container engine: $engine" >&2
+        echo "Unknown container engine: $CONTAINER_ENGINE" >&2
         return 1
     fi
 }
@@ -454,4 +453,20 @@ function check_file() {
     fi
     echo "Found file: $1"
     return 0
+}
+
+function build_compose_override() {
+    local enable_saml="$1"
+    local use_internal_pg="$2"
+    local base_files="-f container-compose.yml -f container-compose.override.yml -f container-compose.nginx.yml"
+    local files="$base_files"
+
+    if [[ "${enable_saml,,}" == "y" ]]; then
+        files="$files -f container-compose.saml.yml"
+    fi
+    if [[ "${use_internal_pg,,}" == "y" ]]; then
+        files="$files -f container-compose.postgres.yml"
+    fi
+
+    echo "$files"
 }

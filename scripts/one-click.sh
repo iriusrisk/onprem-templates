@@ -96,13 +96,13 @@ fi
 prompt_postgres_option
 
 if [[ "$POSTGRES_SETUP_OPTION" == "1" ]]; then
-    install_and_configure_postgres "container" $CONTAINER_ENGINE
+    install_and_configure_postgres "container"
     export USE_INTERNAL_PG="y"
     export DB_PASS
 elif [[ "$POSTGRES_SETUP_OPTION" == "2" ]]; then
     export USE_INTERNAL_PG="n"
 elif [[ "$POSTGRES_SETUP_OPTION" == "3" ]]; then
-    install_and_configure_postgres "host" $CONTAINER_ENGINE
+    install_and_configure_postgres "host"
     export USE_INTERNAL_PG="n"
     export DB_IP DB_PASS
 fi
@@ -156,13 +156,12 @@ if [[ "$DEPLOY_OK" == "n" ]]; then
 fi
 
 # ---- LOGIN TO CONTAINER REGISTRY ----
-container_registry_login "$CONTAINER_ENGINE"
+container_registry_login
 
 # —————————————————————————————————————————————————————————————
 # 8. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
-DOCKER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../docker && pwd)"
-PODMAN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../podman && pwd)"
+CONTAINER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../container-compose && pwd)"
 
 case "$CONTAINER_ENGINE" in
     docker)
@@ -179,23 +178,14 @@ case "$CONTAINER_ENGINE" in
                 exit 1
             fi
         fi
-        cd "$DOCKER_DIR"
+        cd "$CONTAINER_DIR"
 
         if [[ -z "$DOCKER_USER" ]]; then
             DOCKER_USER="$USER"
         fi
 
-        # Compose override logic for SAML
-        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" && "${USE_INTERNAL_PG,,}" == "y" ]]; then
-            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.postgres.yml -f docker-compose.saml.yml"
-        elif [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
-            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.saml.yml"
-        elif [[ "${USE_INTERNAL_PG,,}" == "y" ]]; then
-            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.postgres.yml"
-        else
-            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml"
-        fi
-
+        # Build commands
+        COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
         CLEAN_CMD="docker-compose $COMPOSE_OVERRIDE down --remove-orphans"
         PS_CMD="docker-compose $COMPOSE_OVERRIDE ps -q"
         PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
@@ -217,7 +207,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=true
-WorkingDirectory=$DOCKER_DIR
+WorkingDirectory=$CONTAINER_DIR
 ExecStart=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE up -d"
 ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
 
@@ -232,19 +222,10 @@ EOF
     podman)
         echo
         echo "Deploying with Podman Compose..."
-        cd "$PODMAN_DIR"
+        cd "$CONTAINER_DIR"
 
-        # Compose override logic for SAML
-        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" && "${USE_INTERNAL_PG,,}" == "y" ]]; then
-            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.postgres.yml -f container-compose.saml.yml"
-        elif [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
-            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.saml.yml"
-        elif [[ "${USE_INTERNAL_PG,,}" == "y" ]]; then
-            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.postgres.yml"
-        else
-            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
-        fi
-
+        # Build commands
+        COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
         CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
         UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
         PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"

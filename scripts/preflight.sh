@@ -2,7 +2,7 @@
 source functions.sh
 
 # —————————————————————————————————————————————————————————————
-# Start of main script logic
+# 0. Set static variables
 # —————————————————————————————————————————————————————————————
 echo "IriusRisk On-Prem Preflight Check"
 echo "----------------------------------"
@@ -15,11 +15,12 @@ REQUIRED_JAVA="17"
 ERRORS=()
 WARNINGS=()
 
-OVERRIDE_FILE=""
-SAML_FILE=""
+COMPOSE_FILE="../container-compose/container-compose.yml"
+OVERRIDE_FILE="../container-compose/container-compose.override.yml"
+SAML_FILE="../container-compose/container-compose.saml.yml"
 
 # —————————————————————————————————————————————————————————————
-# 0. SAML setup
+# 1. SAML setup
 # —————————————————————————————————————————————————————————————
 
 if [[ -n "$SAML_CHOICE" ]]; then
@@ -30,12 +31,12 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 1. Decide on container engine
+# 2. Decide on container engine
 # —————————————————————————————————————————————————————————————
 prompt_engine
 
 # —————————————————————————————————————————————————————————————
-# 2. Check OS type
+# 3. Check OS type
 # —————————————————————————————————————————————————————————————
 echo "Checking OS type..."
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -47,7 +48,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 3. Check for git and global git config
+# 4. Check for git and global git config
 # —————————————————————————————————————————————————————————————
 if command -v git &>/dev/null; then
     echo "git found."
@@ -74,7 +75,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Check chosen engine, versions, and override paths
+# 5. Check chosen engine and versions
 # —————————————————————————————————————————————————————————————
 case "$CONTAINER_ENGINE" in
     docker)
@@ -88,8 +89,6 @@ case "$CONTAINER_ENGINE" in
                 echo "$msg"
                 ERRORS+=("$msg")
             fi
-            OVERRIDE_FILE="../docker/docker-compose.override.yml"
-            SAML_FILE="../docker/docker-compose.saml.yml"
         else
             msg="ERROR: Docker not installed but selected as engine."
             echo "$msg"
@@ -105,8 +104,6 @@ case "$CONTAINER_ENGINE" in
                 echo "$msg"
                 ERRORS+=("$msg")
             fi
-            OVERRIDE_FILE="../podman/container-compose.override.yml"
-            SAML_FILE="../podman/container-compose.saml.yml"
         else
             msg="ERROR: Podman not installed but selected as engine."
             echo "$msg"
@@ -121,7 +118,7 @@ case "$CONTAINER_ENGINE" in
 esac
 
 # —————————————————————————————————————————————————————————————
-# 5. Check Java
+# 6. Check Java
 # —————————————————————————————————————————————————————————————
 if command -v java &>/dev/null; then
     JAVA_FULL_VER=$(java -version 2>&1 | head -n 1)
@@ -144,7 +141,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 6. Check required local certificate/key files
+# 7. Check required local certificate/key files
 # —————————————————————————————————————————————————————————————
 echo "Checking required local certificate/key files..."
 for f in cert.pem key.pem ec_private.pem; do
@@ -152,7 +149,7 @@ for f in cert.pem key.pem ec_private.pem; do
 done
 
 # —————————————————————————————————————————————————————————————
-# 7. Check override files for required variables and valid values
+# 8. Check override files for required variables and valid values
 # —————————————————————————————————————————————————————————————
 POSTGRES_VALUES_FILLED=1
 
@@ -200,7 +197,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. SAML checks
+# 9. SAML checks
 # —————————————————————————————————————————————————————————————
 if [[ "$ENABLE_SAML" == "y" && -n "$SAML_FILE" && -f "$SAML_FILE" ]]; then
     echo "Checking $SAML_FILE for required variables and valid values..."
@@ -225,7 +222,7 @@ if [[ "$ENABLE_SAML" == "y" && -n "$SAML_FILE" && -f "$SAML_FILE" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 9. Postgres connectivity check (if applicable)
+# 10. Postgres connectivity check (if applicable)
 # —————————————————————————————————————————————————————————————
 if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
     DB_IP=$(echo "$IRIUS_DB_URL" | sed -n 's/.*jdbc:postgresql:\/\/\([^:/]*\).*/\1/p')
@@ -259,7 +256,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 10. Print summary report
+# 11. Print summary report
 # —————————————————————————————————————————————————————————————
 echo
 echo "================ Preflight Report ================"

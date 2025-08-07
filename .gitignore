@@ -2,8 +2,10 @@
 scripts/preflight_output.txt
 
 # Ignore generated certificates
-docker/*.pem
-podman/*.pem
+*.pem
 
 # Ignore postgres db
 postgres
+
+# Ignore generated nginx override
+container-compose/container-compose.nginx.yml

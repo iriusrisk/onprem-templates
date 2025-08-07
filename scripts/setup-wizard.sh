@@ -13,20 +13,10 @@ prompt_engine
 # —————————————————————————————————————————————————————————————
 # 1. Set override & SAML-file paths once, for downstream logic
 # —————————————————————————————————————————————————————————————
-case "$ENGINE" in
-    docker)
-        OVERRIDE_FILE="../docker/docker-compose.override.yml"
-        SAML_FILE="../docker/docker-compose.saml.yml"
-        ;;
-    podman)
-        OVERRIDE_FILE="../podman/container-compose.override.yml"
-        SAML_FILE="../podman/container-compose.saml.yml"
-        ;;
-    *)
-        echo "ERROR: Unknown engine '$ENGINE'" >&2
-        exit 1
-        ;;
-esac
+COMPOSE_FILE="../container-compose/container-compose.yml"
+OVERRIDE_FILE="../container-compose/container-compose.override.yml"
+SAML_FILE="../container-compose/container-compose.saml.yml"
+NGINX_OVERRIDE="../container-compose/container-compose.nginx.yml"
 
 # —————————————————————————————————————————————————————————————
 # 2. Prompt for key values (with validation)
@@ -146,12 +136,72 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 6. Summary
+# 6. Safely update nginx override
+# —————————————————————————————————————————————————————————————
+
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+  cat > "$NGINX_OVERRIDE" <<EOF
+version: '3.7'
+services:
+  nginx:
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    image: continuumsecurity/iriusrisk-prod:nginx
+    container_name: iriusrisk-nginx
+    networks:
+      - iriusrisk-frontend
+    mem_reservation: 50M
+    mem_limit: 200M
+    cpu_shares: 128
+    volumes:
+      - "./cert.pem:/etc/nginx/ssl/star_iriusrisk_com.crt:ro"
+      - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:ro"
+EOF
+
+elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+  cat > "$NGINX_OVERRIDE" <<EOF
+version: '3.7'
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    image: localhost/nginx-rhel
+    container_name: iriusrisk-nginx
+    networks:
+      - iriusrisk-frontend
+    mem_reservation: 50M
+    mem_limit: 200M
+    volumes:
+      - "./cert.pem:/etc/nginx/ssl/star_iriusrisk_com.crt:z"
+      - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:z"
+EOF
+
+fi
+
+
+# —————————————————————————————————————————————————————————————
+# 6. Safely update main compose file
+# —————————————————————————————————————————————————————————————
+
+# For Docker, ensure restart policy exists under each service
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+    echo "Modifying base file for docker (only in services section)…"
+    sed -i '/^services:/,${/^  [A-Za-z0-9_-]\+:[ ]*$/{
+N
+/\n    restart:/!s/\n/\n    restart: unless-stopped\n/
+}}' "$COMPOSE_FILE"
+fi
+
+# —————————————————————————————————————————————————————————————
+# 7. Summary
 # —————————————————————————————————————————————————————————————
 echo
 echo "--------------------------------------------"
 echo "Setup complete. Summary of your values:"
-echo "Container engine:      $ENGINE"
+echo "Container engine:      $CONTAINER_ENGINE"
 echo "Host name:             $HOST_NAME"
 echo "Postgres host/IP:      $DB_IP"
 echo "Postgres password:     [set]"

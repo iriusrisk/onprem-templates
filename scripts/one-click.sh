@@ -193,6 +193,10 @@ case "$CONTAINER_ENGINE" in
         if [[ -n "$PS_OUTPUT" ]]; then
             echo "Cleaning up existing containers for this project..."
             sg docker -c "cd $(pwd) && $CLEAN_CMD"
+            # Force-remove any leftover containers by their container_name
+            for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
+                sg docker -c "docker rm -f $svc 2>/dev/null || true"
+            done
         fi
 
         # Dynamically write systemd unit file
@@ -234,6 +238,10 @@ EOF
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
             eval "$CLEAN_CMD"
+            # Force‐remove any leftover containers by their container_name
+            for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
+                sudo podman rm -f "$svc" 2>/dev/null || true
+            done
         fi
 
         # Run the temporary container to perform modifications (nginx capabilities fix)

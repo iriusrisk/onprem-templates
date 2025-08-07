@@ -231,15 +231,17 @@ fi
 # —————————————————————————————————————————————————————————————
 if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
     DB_IP=$(echo "$IRIUS_DB_URL" | sed -n 's/.*jdbc:postgresql:\/\/\([^:/]*\).*/\1/p')
-    DB_PASS=$(echo "$IRIUS_DB_URL" | sed -n 's/.*password=\([^& ]*\).*/\1/p')
-
-    if [[ "$DB_IP" == "postgres" ]]; then
-        DB_IP="localhost"
+    # If the URL has no password=… (file-driver mode), fall back to the env var
+    if echo "$IRIUS_DB_URL" | grep -q 'password='; then
+      DB_PASS=$(echo "$IRIUS_DB_URL" \
+        | sed -n 's/.*password=\([^& ]*\).*/\1/p')
+    else
+      DB_PASS="$POSTGRES_PASSWORD"
     fi
 
     if [[ "$CONTAINER_ENGINE" == podman ]]; then
         # Before the connectivity check, grab the path to the mounted secret on the host:
-        SECRET_PATH=$(podman secret inspect db_pwd \
+        SECRET_PATH=$(sudo podman secret inspect db_pwd \
         --format '{{range .}}{{.Spec.Source}}{{end}}')
 
         # decrypt into DB_PASS

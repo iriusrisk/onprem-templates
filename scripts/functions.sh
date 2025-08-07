@@ -193,7 +193,7 @@ function install_and_configure_postgres() {
         # Wait for the container to be ready
         echo "Waiting for Postgres container to be ready..."
         timeout=60
-        until $CONTAINER_ENGINE exec iriusrisk-postgres pg_isready -U postgres; do
+        until sudo $CONTAINER_ENGINE exec iriusrisk-postgres pg_isready -U postgres; do
             sleep 2
             ((timeout--))
             if [ $timeout -le 0 ]; then

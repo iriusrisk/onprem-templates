@@ -89,10 +89,8 @@ fi
 
 # Update NG_SERVER_NAME (replace any occurrence)
 sed -i "s|NG_SERVER_NAME=.*|NG_SERVER_NAME=$HOST_NAME|g" "$OVERRIDE_FILE"
-
 # Update IRIUS_EXT_URL (replace \${HOST_NAME} or any existing value)
 sed -i "s|IRIUS_EXT_URL=.*|IRIUS_EXT_URL=$IRIUS_EXT_URL|g" "$OVERRIDE_FILE"
-
 # Remove existing IRIUS_DB_URL line (escaped or not)
 sed -i '/IRIUS_DB_URL=/d' "$OVERRIDE_FILE"
 # Insert a correct line after 'environment:' under tomcat:
@@ -154,7 +152,7 @@ echo
 echo "--------------------------------------------"
 echo "Setup complete. Summary of your values:"
 echo "Container engine:      $ENGINE"
-echo "HOST_NAME:             $HOST_NAME"
+echo "Host name:             $HOST_NAME"
 echo "Postgres host/IP:      $DB_IP"
 echo "Postgres password:     [set]"
 echo "Override file:         $OVERRIDE_FILE"

@@ -50,7 +50,9 @@ fi
 if echo "$PRE_ERRS" | grep -q "Java not found"; then
     install_java
 fi
-
+if echo "$PRE_ERRS" | grep -q "psql' client is not installed"; then
+    install_psql
+fi
 if ! command -v jq &>/dev/null; then
     install_jq
 fi
@@ -94,11 +96,13 @@ fi
 prompt_postgres_option
 
 if [[ "$POSTGRES_SETUP_OPTION" == "1" ]]; then
+    install_and_configure_postgres "container" $CONTAINER_ENGINE
     export USE_INTERNAL_PG="y"
+    export DB_PASS
 elif [[ "$POSTGRES_SETUP_OPTION" == "2" ]]; then
     export USE_INTERNAL_PG="n"
 elif [[ "$POSTGRES_SETUP_OPTION" == "3" ]]; then
-    install_and_configure_postgres
+    install_and_configure_postgres "host" $CONTAINER_ENGINE
     export USE_INTERNAL_PG="n"
     export DB_IP DB_PASS
 fi
@@ -182,13 +186,17 @@ case "$CONTAINER_ENGINE" in
         fi
 
         # Compose override logic for SAML
-        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
+        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" && "${USE_INTERNAL_PG,,}" == "y" ]]; then
+            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.postgres.yml -f docker-compose.saml.yml"
+        elif [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
             COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.saml.yml"
+        elif [[ "${USE_INTERNAL_PG,,}" == "y" ]]; then
+            COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml -f docker-compose.postgres.yml"
         else
             COMPOSE_OVERRIDE="-f docker-compose.yml -f docker-compose.override.yml"
         fi
 
-        CLEAN_CMD="docker-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
+        CLEAN_CMD="docker-compose $COMPOSE_OVERRIDE down --remove-orphans"
         PS_CMD="docker-compose $COMPOSE_OVERRIDE ps -q"
         PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
 
@@ -217,10 +225,9 @@ ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
 WantedBy=multi-user.target
 EOF
 
-        # sudo /sbin/restorecon -v /etc/systemd/system/$SERVICE_NAME
         sudo systemctl daemon-reload
         sudo systemctl enable $SERVICE_NAME
-        sudo systemctl start $SERVICE_NAME
+        sudo systemctl restart $SERVICE_NAME
         ;;
     podman)
         echo
@@ -228,13 +235,17 @@ EOF
         cd "$PODMAN_DIR"
 
         # Compose override logic for SAML
-        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
+        if [[ "${ENABLE_SAML_ONCLICK,,}" == "y" && "${USE_INTERNAL_PG,,}" == "y" ]]; then
+            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.postgres.yml -f container-compose.saml.yml"
+        elif [[ "${ENABLE_SAML_ONCLICK,,}" == "y" ]]; then
             COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.saml.yml"
+        elif [[ "${USE_INTERNAL_PG,,}" == "y" ]]; then
+            COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml -f container-compose.postgres.yml"
         else
             COMPOSE_OVERRIDE="-f container-compose.yml -f container-compose.override.yml"
         fi
 
-        CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --volumes --remove-orphans"
+        CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
         UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
         PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
@@ -292,7 +303,7 @@ EOF
         for cname in "${containers[@]}"; do
             svc="container-$cname.service"
             sudo systemctl enable "$svc"
-            sudo systemctl start "$svc"
+            sudo systemctl restart "$svc"
         done
         echo "Podman systemd services created and enabled"
         ;;

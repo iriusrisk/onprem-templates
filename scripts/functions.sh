@@ -133,87 +133,172 @@ function install_java() {
     fi
 }
 
+function install_psql() {
+    echo "Installing PostgreSQL client..."
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y postgresql
+    else
+        echo "Please install PostgreSQL client manually." >&2
+        exit 1
+    fi
+}
+
 function install_and_configure_postgres() {
+    local mode="$1"      # "container" or "host"
+    local engine="$2"    # "docker" or "podman"
     PG_USER="iriusprod"
     PG_DB="iriusprod"
     PG_SUPERUSER="postgres"
 
-    # Terminate connections to the DB, if any
-    echo "Terminating any existing connections to $PG_DB..."
-    sudo -u $PG_SUPERUSER psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$PG_DB';" 2>/dev/null || true
+    # Generate a password for the DB user
+    DB_PASS=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20)
 
+    if [[ "$mode" == "container" ]]; then
+        # --- Containerized Postgres ---
+        echo "Starting internal Postgres container..."
+        if [[ $engine == "docker" ]]; then
+            POSTGRES_FILE="../docker/docker-compose.postgres.yml"
+            CONTAINER_PATH="../docker"
+            COMPOSE_TOOL="docker-compose"
+        elif [[ $engine == "podman" ]]; then
+            POSTGRES_FILE="../podman/container-compose.postgres.yml"
+            CONTAINER_PATH="../podman"
+            COMPOSE_TOOL="podman-compose"
+        fi
 
-    # Drop the database if it exists
-    echo "Dropping database $PG_DB if it exists..."
-    sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB';" 2>/dev/null | grep -q 1 \
-    && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP DATABASE \"$PG_DB\";" 2>/dev/null \
-    || echo "Database $PG_DB does not exist, skipping drop."
+        # Replace or insert POSTGRES_PASSWORD in override:
+        sed -i "s|POSTGRES_PASSWORD:.*|POSTGRES_PASSWORD: $DB_PASS|g" "$POSTGRES_FILE"
+        echo "Updated $POSTGRES_FILE"
+        cd $CONTAINER_PATH
 
-    # Drop the user if it exists
-    sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER';" 2>/dev/null | grep -q 1 \
-    && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP ROLE \"$PG_USER\";" 2>/dev/null \
-    || echo "Role $PG_USER does not exist, skipping drop."
+        # Stop and clean old containers/volumes, deploy new container
+        if [[ $engine == "docker" ]]; then
+            sg docker -c "$COMPOSE_TOOL down --remove-orphans"
+            sudo rm -rf ./postgres/data
+            sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d"
+        elif [[ $engine == "podman" ]]; then
+            $COMPOSE_TOOL down --remove-orphans
+            sudo rm -rf ./postgres/data
+            $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d
+        fi
 
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update
-        sudo apt-get install dirmngr ca-certificates software-properties-common apt-transport-https lsb-release curl -y
-        # Add PGDG repo
-        curl -fSsL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /usr/share/keyrings/postgresql.gpg > /dev/null
-        echo deb [arch=amd64,arm64,ppc64el signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main | sudo tee /etc/apt/sources.list.d/postgresql.list
-        sudo apt update
-        sudo apt-get install -y postgresql-15 postgresql-client-15 postgresql-contrib
-        PG_CONF="/etc/postgresql/15/main/postgresql.conf"
-        PG_HBA="/etc/postgresql/15/main/pg_hba.conf"
-        if [[ ! -f "$PG_CONF" ]]; then
-            echo "ERROR: Postgres 15 config not found at $PG_CONF! Install may have failed." >&2
+        # Wait for the container to be ready
+        echo "Waiting for Postgres container to be ready..."
+        timeout=60
+        until $engine exec iriusrisk-postgres pg_isready -U postgres; do
+            sleep 2
+            ((timeout--))
+            if [ $timeout -le 0 ]; then
+                echo "ERROR: Postgres container did not become ready in time."
+                $engine logs iriusrisk-postgres
             exit 1
         fi
-        sudo systemctl enable postgresql
-        sudo systemctl start postgresql
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
-        sudo dnf -qy module disable postgresql
-        sudo dnf install -y postgresql15-server
-        PG_CONF="/var/lib/pgsql/15/data/postgresql.conf"
-        PG_HBA="/var/lib/pgsql/15/data/pg_hba.conf"
-        # Only run initdb if data directory is empty
-        if ! sudo test -f "$PG_CONF"; then
-            echo "Initializing PostgreSQL database (initdb)..."
-            sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
-        else
-            echo "PostgreSQL already initialized at $PG_CONF"
+        done
+        echo "Postgres is ready!"
+
+        # Drop DB and user if exist, then create them
+        if [[ $engine == "docker" ]]; then
+            sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"DROP DATABASE IF EXISTS \\\"$PG_DB\\\";\""
+            sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"DROP ROLE IF EXISTS $PG_USER;\""
+            sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';\""
+            sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE DATABASE $PG_DB WITH OWNER $PG_USER;\""
+        elif [[ $engine == "podman" ]]; then
+            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "DROP DATABASE IF EXISTS \"$PG_DB\";"
+            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "DROP ROLE IF EXISTS $PG_USER;"
+            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';"
+            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
         fi
-        sudo systemctl enable postgresql-15
-        sudo systemctl start postgresql-15
-    else
-        echo "ERROR: Unsupported OS for PostgreSQL install." >&2
-        exit 1
+
+        DB_IP="postgres" # Service name in Compose network
+        export DB_IP DB_PASS
+
+        echo "Internal PostgreSQL (container) is ready:"
+        echo "  Host: $DB_IP"
+        echo "  User: $PG_USER"
+        echo "  Password: $DB_PASS"
+        echo "  Database: $PG_DB"
+
+        cd ../scripts
+    elif [[ "$mode" == "host" ]]; then
+        # --- Host/OS Postgres (non-container) ---
+        # Terminate connections to the DB, if any
+        echo "Terminating any existing connections to $PG_DB..."
+        sudo -u $PG_SUPERUSER psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$PG_DB';" 2>/dev/null || true
+
+        # Drop the database if it exists
+        echo "Dropping database $PG_DB if it exists..."
+        sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB';" 2>/dev/null | grep -q 1 \
+        && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP DATABASE \"$PG_DB\";" 2>/dev/null \
+        || echo "Database $PG_DB does not exist, skipping drop."
+
+        # Drop the user if it exists
+        sudo -u $PG_SUPERUSER psql -d postgres -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER';" 2>/dev/null | grep -q 1 \
+        && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP ROLE \"$PG_USER\";" 2>/dev/null \
+        || echo "Role $PG_USER does not exist, skipping drop."
+
+        if [[ $engine == "docker" ]]; then
+            sudo apt-get update
+            sudo apt-get install dirmngr ca-certificates software-properties-common apt-transport-https lsb-release curl -y
+            # Add PGDG repo
+            curl -fSsL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /usr/share/keyrings/postgresql.gpg > /dev/null
+            echo deb [arch=amd64,arm64,ppc64el signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main | sudo tee /etc/apt/sources.list.d/postgresql.list
+            sudo apt update
+            sudo apt-get install -y postgresql-15 postgresql-client-15 postgresql-contrib
+            PG_CONF="/etc/postgresql/15/main/postgresql.conf"
+            PG_HBA="/etc/postgresql/15/main/pg_hba.conf"
+            if [[ ! -f "$PG_CONF" ]]; then
+                echo "ERROR: Postgres 15 config not found at $PG_CONF! Install may have failed." >&2
+                exit 1
+            fi
+            sudo systemctl enable postgresql
+            sudo systemctl start postgresql
+        elif [[ $engine == "podman" ]]; then
+            sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+            sudo dnf -qy module disable postgresql
+            sudo dnf install -y postgresql15-server
+            PG_CONF="/var/lib/pgsql/15/data/postgresql.conf"
+            PG_HBA="/var/lib/pgsql/15/data/pg_hba.conf"
+            # Only run initdb if data directory is empty
+            if ! sudo test -f "$PG_CONF"; then
+                echo "Initializing PostgreSQL database (initdb)..."
+                sudo /usr/pgsql-15/bin/postgresql-15-setup initdb
+            else
+                echo "PostgreSQL already initialized at $PG_CONF"
+            fi
+            sudo systemctl enable postgresql-15
+            sudo systemctl start postgresql-15
+        else
+            echo "ERROR: Unsupported OS for PostgreSQL install." >&2
+            exit 1
+        fi
+
+        sudo cp "$PG_CONF" "$PG_CONF.bak"
+        sudo sed -i "s/^#listen_addresses = .*/listen_addresses = '*'/" "$PG_CONF"
+
+        sudo cp "$PG_HBA" "$PG_HBA.bak"
+        sudo grep -q "host all all 0.0.0.0/0 scram-sha-256" "$PG_HBA" || \
+            echo "host all all 0.0.0.0/0 scram-sha-256" | sudo tee -a "$PG_HBA"
+
+        if command -v apt-get &>/dev/null; then
+            sudo systemctl restart postgresql
+        else
+            sudo systemctl restart postgresql-15
+        fi
+
+        (cd /tmp && sudo -u postgres psql -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '${DB_PASS}';")
+        (cd /tmp && sudo -u postgres psql -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;")
+
+        DB_IP=$(hostname -I | awk '{print $1}')
+        export DB_IP DB_PASS
+        echo "Local PostgreSQL is ready:"
+        echo "  IP: $DB_IP"
+        echo "  User: $PG_USER"
+        echo "  Password: $DB_PASS"
+        echo "  Database: $PG_DB"
     fi
-
-    sudo cp "$PG_CONF" "$PG_CONF.bak"
-    sudo sed -i "s/^#listen_addresses = .*/listen_addresses = '*'/" "$PG_CONF"
-
-    sudo cp "$PG_HBA" "$PG_HBA.bak"
-    sudo grep -q "host all all 0.0.0.0/0 scram-sha-256" "$PG_HBA" || \
-        echo "host all all 0.0.0.0/0 scram-sha-256" | sudo tee -a "$PG_HBA"
-
-    if command -v apt-get &>/dev/null; then
-        sudo systemctl restart postgresql
-    else
-        sudo systemctl restart postgresql-15
-    fi
-
-    DB_PASS=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 20)
-    (cd /tmp && sudo -u postgres psql -c "CREATE USER iriusprod WITH CREATEDB PASSWORD '${DB_PASS}';")
-    (cd /tmp && sudo -u postgres psql -c "CREATE DATABASE iriusprod WITH OWNER iriusprod;")
-
-    DB_IP=$(hostname -I | awk '{print $1}')
-    export DB_IP DB_PASS
-    echo "Local PostgreSQL is ready:"
-    echo "  IP: $DB_IP"
-    echo "  User: iriusprod"
-    echo "  Password: $DB_PASS"
-    echo "  Database: iriusprod"
 }
 
 function install_jq() {

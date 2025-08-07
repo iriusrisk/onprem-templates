@@ -4,3 +4,6 @@ scripts/preflight_output.txt
 # Ignore generated certificates
 docker/*.pem
 podman/*.pem
+
+# Ignore postgres db
+postgres

@@ -230,6 +230,11 @@ fi
 if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
     DB_IP=$(echo "$IRIUS_DB_URL" | sed -n 's/.*jdbc:postgresql:\/\/\([^:/]*\).*/\1/p')
     DB_PASS=$(echo "$IRIUS_DB_URL" | sed -n 's/.*password=\([^& ]*\).*/\1/p')
+
+    if [[ "$DB_IP" == "postgres" ]]; then
+        DB_IP="localhost"
+    fi
+
     if [[ -n "$DB_IP" && -n "$DB_PASS" ]]; then
         if command -v psql &>/dev/null; then
             if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then

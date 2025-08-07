@@ -185,9 +185,9 @@ function install_and_configure_postgres() {
                 sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d"
             elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
                 $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") down --remove-orphans
-                podman ps -aq --filter name=iriusrisk-postgres | xargs -r podman rm -f
+                sudo podman ps -aq --filter name=iriusrisk-postgres | xargs -r podman rm -f
                 sudo rm -rf ./postgres/data
-                $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d
+                sudo $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d
             fi
 
         # Wait for the container to be ready
@@ -209,8 +209,8 @@ function install_and_configure_postgres() {
             sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';\""
             sg docker -c "docker exec iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE DATABASE $PG_DB WITH OWNER $PG_USER;\""
         elif [[ $CONTAINER_ENGINE == "podman" ]]; then
-            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';"
-            podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
+            sudo podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';"
+            sudo podman exec iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
         fi
 
         DB_IP="postgres" # Service name in Compose network
@@ -456,9 +456,15 @@ function check_file() {
 }
 
 function build_compose_override() {
+    if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+        OVERRIDE_FILE="container-compose.docker.yml"
+    elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+        OVERRIDE_FILE="container-compose.podman.yml"
+    fi
+
     local enable_saml="$1"
     local use_internal_pg="$2"
-    local base_files="-f container-compose.yml -f container-compose.override.yml -f container-compose.nginx.yml"
+    local base_files="-f container-compose.yml -f $OVERRIDE_FILE -f container-compose.nginx.yml"
     local files="$base_files"
 
     if [[ "${enable_saml,,}" == "y" ]]; then

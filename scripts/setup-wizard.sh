@@ -14,9 +14,14 @@ prompt_engine
 # 1. Set override & SAML-file paths once, for downstream logic
 # —————————————————————————————————————————————————————————————
 COMPOSE_FILE="../container-compose/container-compose.yml"
-OVERRIDE_FILE="../container-compose/container-compose.override.yml"
 SAML_FILE="../container-compose/container-compose.saml.yml"
 NGINX_OVERRIDE="../container-compose/container-compose.nginx.yml"
+
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+    OVERRIDE_FILE="../container-compose/container-compose.docker.yml"
+elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+    OVERRIDE_FILE="../container-compose/container-compose.podman.yml"
+fi
 
 # —————————————————————————————————————————————————————————————
 # 2. Prompt for key values (with validation)
@@ -55,7 +60,31 @@ JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&passwor
 IRIUS_EXT_URL="https\\\\://$HOST_NAME"
 
 # —————————————————————————————————————————————————————————————
-# 3. SAML setup
+# 3. Build JDBC_URL, and create secret if using podman
+# —————————————————————————————————————————————————————————————
+
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+    # Properly escape JDBC URL for YAML
+    JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"
+elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+    JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod"
+
+    # Encrypt the password to a GPG file
+    echo -n "${DB_PASS}" \
+    | gpg --batch --yes --encrypt \
+            --recipient "${GPG_RECIPIENT}" \
+            --output db_pwd.gpg
+
+    # Create the Podman secret with the pass driver
+    podman secret rm db_pwd 2>/dev/null || true
+    podman secret create --driver=pass db_pwd db_pwd.gpg
+
+    # Remove the local .gpg after loading it into Podman
+    rm db_pwd.gpg
+fi
+
+# —————————————————————————————————————————————————————————————
+# 4. SAML setup
 # —————————————————————————————————————————————————————————————
 if [[ -n "$SAML_CHOICE" ]]; then
     ENABLE_SAML="$SAML_CHOICE"
@@ -70,8 +99,9 @@ if [[ "$ENABLE_SAML" == "y" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Safely update override file & generate certificates
+# 5. Safely update override file & generate certificates
 # —————————————————————————————————————————————————————————————
+
 if [[ ! -f "$OVERRIDE_FILE" ]]; then
     echo "ERROR: $OVERRIDE_FILE not found. Please ensure you have cloned the repo and have the override template."
     exit 1
@@ -101,7 +131,7 @@ echo "Updated $OVERRIDE_FILE"
 ensure_certificates $HOST_NAME
 
 # —————————————————————————————————————————————————————————————
-# 5. Safely update SAML override if enabled
+# 6. Safely update SAML override if enabled
 # —————————————————————————————————————————————————————————————
 if [[ "$ENABLE_SAML" == "y" ]]; then
     if [[ ! -f "$SAML_FILE" ]]; then
@@ -136,7 +166,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 6. Safely update nginx override
+# 7. Safely update nginx override
 # —————————————————————————————————————————————————————————————
 
 if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
@@ -148,7 +178,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    image: continuumsecurity/iriusrisk-prod:nginx
+    image: docker.io/continuumsecurity/iriusrisk-prod:nginx
     container_name: iriusrisk-nginx
     networks:
       - iriusrisk-frontend
@@ -183,7 +213,7 @@ fi
 
 
 # —————————————————————————————————————————————————————————————
-# 6. Safely update main compose file
+# 8. Safely update main compose file
 # —————————————————————————————————————————————————————————————
 
 # For Docker, ensure restart policy exists under each service
@@ -196,7 +226,7 @@ N
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Summary
+# 9. Summary
 # —————————————————————————————————————————————————————————————
 echo
 echo "--------------------------------------------"

@@ -1,0 +1,25 @@
+version: '3.7'
+
+services:
+
+  nginx:
+    environment:
+      - NG_SERVER_NAME=${HOST_NAME}
+  tomcat:
+    secrets:
+      - db_pwd
+
+    environment:
+      - IRIUS_DB_URL=jdbc:postgresql://\${POSTGRES_IP}:5432/iriusprod?user=iriusprod
+      - IRIUS_EXT_URL=https://\${HOST_NAME}
+
+    command: >
+      sh -c '
+        DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd);
+        export IRIUS_DB_URL="\${IRIUS_DB_URL}&password=\${DECRYPTED}";
+        exec catalina.sh run
+      '
+
+secrets:
+  db_pwd:
+    external: true

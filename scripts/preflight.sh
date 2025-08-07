@@ -16,7 +16,6 @@ ERRORS=()
 WARNINGS=()
 
 COMPOSE_FILE="../container-compose/container-compose.yml"
-OVERRIDE_FILE="../container-compose/container-compose.override.yml"
 SAML_FILE="../container-compose/container-compose.saml.yml"
 
 # —————————————————————————————————————————————————————————————
@@ -31,9 +30,15 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 2. Decide on container engine
+# 2. Decide on container engine & set override location
 # —————————————————————————————————————————————————————————————
 prompt_engine
+
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+    OVERRIDE_FILE="../container-compose/container-compose.docker.yml"
+elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+    OVERRIDE_FILE="../container-compose/container-compose.podman.yml"
+fi
 
 # —————————————————————————————————————————————————————————————
 # 3. Check OS type

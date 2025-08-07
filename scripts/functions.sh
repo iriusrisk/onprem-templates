@@ -184,7 +184,7 @@ function install_and_configure_postgres() {
                 sudo rm -rf ./postgres/data
                 sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d"
             elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-                $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") down --remove-orphans
+                sudo $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") down --remove-orphans
                 sudo podman ps -aq --filter name=iriusrisk-postgres | xargs -r podman rm -f
                 sudo rm -rf ./postgres/data
                 sudo $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d

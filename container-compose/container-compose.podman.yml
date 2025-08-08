@@ -23,7 +23,7 @@ services:
         gpg --batch --import /run/secrets/db_privkey
 
         # decrypt the password blob
-        DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
+        DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd | tr -d '\r\n')
 
         echo "DEBUG: DECRYPTED = [$DECRYPTED]" >&2
 

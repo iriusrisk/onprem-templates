@@ -15,13 +15,20 @@ services:
       - IRIUS_EXT_URL=https://\${HOST_NAME}
 
     entrypoint: |
-      sh -euxc '
-        gpg --batch --import /run/secrets/db_privkey
-        DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-        export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DECRYPTED}"
-        echo "DEBUG: Final IRIUS_DB_URL is $IRIUS_DB_URL" >&2
-        exec /entrypoint/dynamic-entrypoint.sh "$@"
-      '
+      set -eux
+
+      # import the private key
+      gpg --batch --import /run/secrets/db_privkey
+
+      # decrypt the password blob
+      DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
+
+      # only now do we expand both vars together, at run-time
+      export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DECRYPTED}"
+      echo "DEBUG: Final IRIUS_DB_URL is $IRIUS_DB_URL" >&2
+
+      # hand off to the real entrypoint
+      exec /entrypoint/dynamic-entrypoint.sh "$@"
 
 secrets:
   db_pwd:

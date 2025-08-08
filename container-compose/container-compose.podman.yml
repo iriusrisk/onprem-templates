@@ -8,6 +8,7 @@ services:
   tomcat:
     secrets:
       - db_pwd
+      - db_privkey
 
     environment:
       - IRIUS_DB_URL=jdbc:postgresql://\${POSTGRES_IP}:5432/iriusprod?user=iriusprod
@@ -24,4 +25,6 @@ services:
 
 secrets:
   db_pwd:
+    external: true
+  db_privkey:
     external: true

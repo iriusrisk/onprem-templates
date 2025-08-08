@@ -261,7 +261,7 @@ services:
             -XX:MaxMetaspaceSize=2G
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
-    image: localhost/tomcat-rhel
+    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
     container_name: iriusrisk-tomcat
     networks:
       - iriusrisk-frontend
@@ -290,7 +290,7 @@ services:
             -XX:MaxMetaspaceSize=2G
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
-    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
+    image: localhost/tomcat-rhel
     container_name: iriusrisk-tomcat
     networks:
       - iriusrisk-frontend

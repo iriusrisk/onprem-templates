@@ -7,5 +7,6 @@ scripts/preflight_output.txt
 # Ignore postgres db
 postgres
 
-# Ignore generated nginx override
+# Ignore generated nginx & tomcat overrides
 container-compose/container-compose.nginx.yml
+container-compose/container-compose.tomcat.yml

@@ -464,7 +464,7 @@ function build_compose_override() {
 
     local enable_saml="$1"
     local use_internal_pg="$2"
-    local base_files="-f container-compose.yml -f $OVERRIDE_FILE -f container-compose.nginx.yml"
+    local base_files="-f container-compose.yml -f $OVERRIDE_FILE -f container-compose.nginx.yml -f container-compose.tomcat.yml"
     local files="$base_files"
 
     if [[ "${enable_saml,,}" == "y" ]]; then

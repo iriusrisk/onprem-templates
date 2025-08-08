@@ -6,30 +6,6 @@ networks:
 
 services:
 
-  tomcat:
-    environment:
-      - IRIUS_EDITION=onprem
-      - grails_env=production
-      - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
-      - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
-      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000
-      - CATALINA_OPTS=
-            -XX:+UseParallelGC
-            -XX:+UseContainerSupport
-            -XX:MetaspaceSize=2G
-            -XX:MaxMetaspaceSize=2G
-            -XX:ReservedCodeCacheSize=2G
-            -XX:MaxRAMPercentage=50
-    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
-    container_name: iriusrisk-tomcat
-    networks:
-      - iriusrisk-frontend
-      - iriusrisk-backend
-    mem_reservation: 2G
-    mem_limit: 10G
-    volumes:
-      - "./ec_private.pem:/etc/irius/ec_private.pem:z"
-
   startleft:
     environment:
       - IRIUS_SERVER=http://tomcat:8080

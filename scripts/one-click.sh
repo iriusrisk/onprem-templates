@@ -258,6 +258,36 @@ EOF
         sudo podman rm temp-nginx
         echo "Custom Nginx image created as localhost/nginx-rhel"
 
+        # Run a throw-away container as root and install gnupg
+        sudo podman run \
+        --name temp-tomcat \
+        --user root \
+        --entrypoint /bin/sh \
+        docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
+        -c "\
+            set -eux; \
+            if [ -f /etc/alpine-release ]; then \
+            apk add --no-cache gnupg; \
+            else \
+            apt-get update && \
+            apt-get install -y --no-install-recommends gnupg && \
+            rm -rf /var/lib/apt/lists/*; \
+            fi; \
+            sleep 1 \
+        "
+
+        # Commit to a new image, resetting USER & ENTRYPOINT to the original Tomcat defaults
+        sudo podman commit \
+        --change='USER tomcat' \
+        --change='ENTRYPOINT [\"/entrypoint/dynamic-entrypoint.sh\"]' \
+        temp-tomcat \
+        localhost/tomcat-rhel
+
+        # Clean up
+        sudo podman rm temp-tomcat
+
+        echo "Custom Tomcat created as localhost/tomcat-rhel"
+
         # Bring up containers
         eval "$UP_CMD"
 

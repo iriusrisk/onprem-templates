@@ -16,6 +16,7 @@ prompt_engine
 COMPOSE_FILE="../container-compose/container-compose.yml"
 SAML_FILE="../container-compose/container-compose.saml.yml"
 NGINX_OVERRIDE="../container-compose/container-compose.nginx.yml"
+TOMCAT_OVERRIDE="../container-compose/container-compose.tomcat.yml"
 
 if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
     OVERRIDE_FILE="../container-compose/container-compose.docker.yml"
@@ -238,9 +239,72 @@ EOF
 
 fi
 
+# —————————————————————————————————————————————————————————————
+# 8. Safely update tomcat override
+# —————————————————————————————————————————————————————————————
+
+if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+  cat > "$TOMCAT_OVERRIDE" <<EOF
+version: '3.7'
+services:
+  tomcat:
+    environment:
+      - IRIUS_EDITION=onprem
+      - grails_env=production
+      - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
+      - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
+      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000
+      - CATALINA_OPTS=
+            -XX:+UseParallelGC
+            -XX:+UseContainerSupport
+            -XX:MetaspaceSize=2G
+            -XX:MaxMetaspaceSize=2G
+            -XX:ReservedCodeCacheSize=2G
+            -XX:MaxRAMPercentage=50
+    image: localhost/tomcat-rhel
+    container_name: iriusrisk-tomcat
+    networks:
+      - iriusrisk-frontend
+      - iriusrisk-backend
+    mem_reservation: 2G
+    mem_limit: 10G
+    volumes:
+      - "./ec_private.pem:/etc/irius/ec_private.pem:z"
+EOF
+
+elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+  cat > "$TOMCAT_OVERRIDE" <<EOF
+version: '3.7'
+services:
+  tomcat:
+    environment:
+      - IRIUS_EDITION=onprem
+      - grails_env=production
+      - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
+      - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
+      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000
+      - CATALINA_OPTS=
+            -XX:+UseParallelGC
+            -XX:+UseContainerSupport
+            -XX:MetaspaceSize=2G
+            -XX:MaxMetaspaceSize=2G
+            -XX:ReservedCodeCacheSize=2G
+            -XX:MaxRAMPercentage=50
+    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
+    container_name: iriusrisk-tomcat
+    networks:
+      - iriusrisk-frontend
+      - iriusrisk-backend
+    mem_reservation: 2G
+    mem_limit: 10G
+    volumes:
+      - "./ec_private.pem:/etc/irius/ec_private.pem:z"
+EOF
+
+fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Safely update main compose file
+# 9. Safely update main compose file
 # —————————————————————————————————————————————————————————————
 
 # For Docker, ensure restart policy exists under each service
@@ -253,7 +317,7 @@ N
 fi
 
 # —————————————————————————————————————————————————————————————
-# 9. Summary
+# 10. Summary
 # —————————————————————————————————————————————————————————————
 echo
 echo "--------------------------------------------"

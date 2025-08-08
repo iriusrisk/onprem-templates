@@ -103,12 +103,19 @@ EOF
 
     export DB_PASS=$DB_PASS
 
-    # Create the Podman secret with the pass driver
-    sudo podman secret rm db_pwd 2>/dev/null || true
-    sudo podman secret create db_pwd db_pwd.gpg
+    # Export your *private* key so the container can decrypt
+    gpg --export-secret-keys --armor "${GPG_RECIPIENT}" > db_privkey.asc
 
-    # Remove the local .gpg after loading it into Podman
-    rm db_pwd.gpg
+    # Load both into Podman as file-driver secrets
+    sudo podman secret rm db_pwd     2>/dev/null || true
+    sudo podman secret rm db_privkey 2>/dev/null || true
+
+    sudo podman secret create --driver=file --replace db_pwd     db_pwd.gpg
+    sudo podman secret create --driver=file --replace db_privkey db_privkey.asc
+
+    # Clean up on the host
+    rm db_pwd.gpg db_privkey.asc
+
 fi
 
 # —————————————————————————————————————————————————————————————

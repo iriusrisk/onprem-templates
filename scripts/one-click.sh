@@ -265,7 +265,7 @@ EOF
         --entrypoint /bin/sh \
         docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
         -c "\
-            set -eux; \
+            set -eu; \
             # install gnupg
             if [ -f /etc/alpine-release ]; then \
                 apk add --no-cache gnupg; \

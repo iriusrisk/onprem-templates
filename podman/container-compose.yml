@@ -35,7 +35,7 @@ services:
             -XX:MaxMetaspaceSize=2G
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
-    image: continuumsecurity/iriusrisk-prod:tomcat-4
+    image: localhost/tomcat-rhel
     container_name: iriusrisk-tomcat
     networks:
       - iriusrisk-frontend

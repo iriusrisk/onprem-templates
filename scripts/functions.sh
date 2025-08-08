@@ -325,7 +325,7 @@ function is_rhel_like() {
 }
 
 
-function ensure_certificates() {
+function create_certificates() {
     CERT_DIR="${CERT_DIR:-../container-compose}"
     CERT_FILE="$CERT_DIR/cert.pem"
     KEY_FILE="$CERT_DIR/key.pem"
@@ -464,7 +464,7 @@ function build_compose_override() {
 
     local enable_saml="$1"
     local use_internal_pg="$2"
-    local base_files="-f container-compose.yml -f $OVERRIDE_FILE -f container-compose.nginx.yml -f container-compose.tomcat.yml"
+    local base_files="-f container-compose.yml -f container-compose.tomcat.yml -f container-compose.nginx.yml -f $OVERRIDE_FILE"
     local files="$base_files"
 
     if [[ "${enable_saml,,}" == "y" ]]; then

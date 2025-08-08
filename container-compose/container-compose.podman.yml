@@ -14,15 +14,14 @@ services:
       - IRIUS_DB_URL=jdbc:postgresql://\${POSTGRES_IP}:5432/iriusprod?user=iriusprod
       - IRIUS_EXT_URL=https://\${HOST_NAME}
 
-    entrypoint:
-      - sh
-      - -c
-      - |
-        gpg --batch --import /run/secrets/db_privkey      
+    entrypoint: |
+      sh -euxc '
+        gpg --batch --import /run/secrets/db_privkey
         DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
         export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DECRYPTED}"
         echo "DEBUG: Final IRIUS_DB_URL is $IRIUS_DB_URL" >&2
         exec /entrypoint/dynamic-entrypoint.sh "$@"
+      '
 
 secrets:
   db_pwd:

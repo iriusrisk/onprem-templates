@@ -163,7 +163,7 @@ awk -v db_url="      - IRIUS_DB_URL=$JDBC_URL" '
 
 echo "Updated $OVERRIDE_FILE"
 
-ensure_certificates $HOST_NAME
+create_certificates $HOST_NAME
 
 # —————————————————————————————————————————————————————————————
 # 6. Safely update SAML override if enabled

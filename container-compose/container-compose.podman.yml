@@ -21,6 +21,7 @@ services:
         gpg --batch --import /run/secrets/db_privkey      
         DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
         export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DECRYPTED}"
+        echo "DEBUG: Final IRIUS_DB_URL is $IRIUS_DB_URL" >&2
         exec /entrypoint/dynamic-entrypoint.sh "$@"
 
 secrets:

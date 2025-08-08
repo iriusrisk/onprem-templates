@@ -266,20 +266,34 @@ EOF
         docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
         -c "\
             set -eux; \
+            # install gnupg
             if [ -f /etc/alpine-release ]; then \
-            apk add --no-cache gnupg; \
+                apk add --no-cache gnupg; \
             else \
-            apt-get update && \
-            apt-get install -y --no-install-recommends gnupg && \
-            rm -rf /var/lib/apt/lists/*; \
+                apt-get update && \
+                apt-get install -y --no-install-recommends gnupg && \
+                rm -rf /var/lib/apt/lists/*; \
             fi; \
-            sleep 1 \
-        "
+            # write our expand-db-url script
+            cat << 'EOF' > /usr/local/bin/expand-db-url.sh
+#!/usr/bin/env sh
+set -eux
+# Import the private key and decrypt the DB password
+gpg --batch --import /run/secrets/db_privkey
+DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
+
+# Append it to the URL and hand off to the real entrypoint
+export IRIUS_DB_URL=\"\$IRIUS_DB_URL&password=\$DECRYPTED\"
+exec /entrypoint/dynamic-entrypoint.sh \"\$@\"
+EOF
+        chmod +x /usr/local/bin/expand-db-url.sh; \
+        sleep 1
+"
 
         # Commit to a new image, resetting USER & ENTRYPOINT to the original Tomcat defaults
         sudo podman commit \
         --change='USER tomcat' \
-        --change='ENTRYPOINT [\"/entrypoint/dynamic-entrypoint.sh\"]' \
+        --change='ENTRYPOINT ["/usr/local/bin/expand-db-url.sh"]' \
         temp-tomcat \
         localhost/tomcat-rhel
 

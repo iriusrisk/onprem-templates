@@ -14,26 +14,6 @@ services:
       - IRIUS_DB_URL=jdbc:postgresql://\${POSTGRES_IP}:5432/iriusprod?user=iriusprod
       - IRIUS_EXT_URL=https://\${HOST_NAME}
 
-    entrypoint:
-      - sh
-      - -c
-      - |
-        set -eux
-        # import our private key
-        gpg --batch --import /run/secrets/db_privkey
-
-        # decrypt the password blob
-        DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd | tr -d '\r\n')
-
-        echo "DEBUG: DECRYPTED = [$DECRYPTED]" >&2
-
-        # append password at run-time
-        export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DECRYPTED}"
-        echo "DEBUG: Final IRIUS_DB_URL is $IRIUS_DB_URL" >&2
-
-        # hand off to the real tomcat entrypoint
-        exec /entrypoint/dynamic-entrypoint.sh "$@"
-
 secrets:
   db_pwd:
     external: true

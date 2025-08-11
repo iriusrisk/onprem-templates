@@ -224,18 +224,22 @@ EOF
 set -eu
 gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
 DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-export POSTGRES_PASSWORD=\"\${DECRYPTED}\"
-exec /usr/local/bin/docker-entrypoint.sh \"\$@\"
-EOF
 
-            # Make it executable
-            chmod +x /usr/local/bin/pg-expand-secret.sh
+# Don’t leak secrets
+set +x
+export POSTGRES_PASSWORD="${DECRYPTED}"
+unset DECRYPTED
+set -x
+
+exec /usr/local/bin/docker-entrypoint.sh "$@"
+EOF
+            chmod 0755 /usr/local/bin/pg-expand-secret.sh
             '
 
-            # IMPORTANT: leave USER unset (root) and call script via /bin/sh
             sudo podman commit \
             --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
             "$TMP" "$PATCHED_IMAGE"
+
 
             sudo podman rm "$TMP"
 

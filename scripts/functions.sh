@@ -215,28 +215,28 @@ EOF
             sudo podman rm -f "$TMP" 2>/dev/null || true
             sudo podman run --name "$TMP" --user root --entrypoint /bin/sh "$BASE_IMAGE" -c '
             set -eu
-            # install gpg
             if [ -f /etc/alpine-release ]; then apk add --no-cache gnupg; else
                 apt-get update && apt-get install -y --no-install-recommends gnupg && rm -rf /var/lib/apt/lists/*; fi
 
-            # wrapper that decrypts secret then execs the real entrypoint
+            # Write the wrapper (LF line endings, no host expansion)
             cat > /usr/local/bin/pg-expand-secret.sh << "EOF"
-            #!/usr/bin/env sh
-            set -eu
-            gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
-            DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-            # do not leak secrets
-            set +x
-            export POSTGRES_PASSWORD="${DECRYPTED}"
-            set -x
-            exec /usr/local/bin/docker-entrypoint.sh "$@"
-            EOF
-            chmod +x /usr/local/bin/pg-expand-secret.sh
+#!/usr/bin/env sh
+set -eu
+gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
+DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
+set +x
+export POSTGRES_PASSWORD="${DECRYPTED}"
+set -x
+exec /usr/local/bin/docker-entrypoint.sh "$@"
+EOF
+
+            # Make it readable (exec bit optional if we invoke via sh)
+            chmod 0644 /usr/local/bin/pg-expand-secret.sh
             '
 
-            # IMPORTANT: do NOT set USER; leave whatever the base image uses (root)
+            # IMPORTANT: leave USER unset (root) and call script via /bin/sh
             sudo podman commit \
-            --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
+            --change='ENTRYPOINT ["/bin/sh","-euxc","/usr/local/bin/pg-expand-secret.sh \"$@\"","--"]' \
             "$TMP" "$PATCHED_IMAGE"
 
             sudo podman rm "$TMP"

@@ -213,33 +213,40 @@ EOF
             TMP="temp-postgres"
 
             sudo podman rm -f "$TMP" 2>/dev/null || true
-            sudo podman run --name "$TMP" --user root --entrypoint /bin/sh "$BASE_IMAGE" -c '
-            set -eu
-            if [ -f /etc/alpine-release ]; then apk add --no-cache gnupg; else
-                apt-get update && apt-get install -y --no-install-recommends gnupg && rm -rf /var/lib/apt/lists/*; fi
 
-            # Write the wrapper (LF line endings, no host expansion)
-            cat > /usr/local/bin/pg-expand-secret.sh << "EOF"
+            sudo podman run \
+            --name  $TMP \
+            --user root \
+            --entrypoint /bin/sh \
+            "$BASE_IMAGE" \
+            -c "\
+                set -eu; \
+                # install gnupg
+                if [ -f /etc/alpine-release ]; then \
+                    apk add --no-cache gnupg; \
+                else \
+                    apt-get update && \
+                    apt-get install -y --no-install-recommends gnupg && \
+                    rm -rf /var/lib/apt/lists/*; \
+                fi; \
+                # write our expand-db-url script
+                cat << 'EOF' > /usr/local/bin/pg-expand-secret.sh
 #!/usr/bin/env sh
 set -eu
-gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
-DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
+# Import the private key and decrypt the DB password
+gpg --batch --import /run/secrets/db_privkey
+DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
 
-# Don’t leak secrets
-set +x
-export POSTGRES_PASSWORD="${DECRYPTED}"
-unset DECRYPTED
-set -x
-
-exec docker-entrypoint.sh "$@"
+# Append it to the URL and hand off to the real entrypoint
+export POSTGRES_PASSWORD=\"\${DECRYPTED}\"
+exec docker-entrypoint.sh \"\$@\"
 EOF
-            chmod 0755 /usr/local/bin/pg-expand-secret.sh
-            '
+            chmod +x /usr/local/bin/pg-expand-secret.sh; \
+    "
 
             sudo podman commit \
             --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
             "$TMP" "$PATCHED_IMAGE"
-
 
             sudo podman rm "$TMP"
 
@@ -286,7 +293,7 @@ EOF
             ((timeout--))
             if [ $timeout -le 0 ]; then
                 echo "ERROR: Postgres container did not become ready in time."
-                $CONTAINER_ENGINE logs iriusrisk-postgres
+                sudo $CONTAINER_ENGINE logs iriusrisk-postgres
                 exit 1
             fi
         done

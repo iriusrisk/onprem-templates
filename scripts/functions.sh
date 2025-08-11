@@ -242,7 +242,7 @@ export POSTGRES_PASSWORD=\"\${DECRYPTED}\"
 exec docker-entrypoint.sh \"\$@\"
 EOF
             chmod +x /usr/local/bin/pg-expand-secret.sh; \
-    "
+"
 
             sudo podman commit \
             --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \

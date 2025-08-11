@@ -224,19 +224,17 @@ EOF
 set -eu
 gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
 DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-set +x
-export POSTGRES_PASSWORD="${DECRYPTED}"
-set -x
-exec /usr/local/bin/docker-entrypoint.sh "$@"
+export POSTGRES_PASSWORD=\"\${DECRYPTED}\"
+exec /usr/local/bin/docker-entrypoint.sh \"\$@\"
 EOF
 
-            # Make it readable (exec bit optional if we invoke via sh)
-            chmod 0644 /usr/local/bin/pg-expand-secret.sh
+            # Make it executable
+            chmod +x /usr/local/bin/pg-expand-secret.sh
             '
 
             # IMPORTANT: leave USER unset (root) and call script via /bin/sh
             sudo podman commit \
-            --change='ENTRYPOINT ["/bin/sh","-euxc","/usr/local/bin/pg-expand-secret.sh \"$@\"","--"]' \
+            --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
             "$TMP" "$PATCHED_IMAGE"
 
             sudo podman rm "$TMP"
@@ -249,11 +247,11 @@ version: '3.7'
 services:
   postgres:
     image: localhost/postgres-gpg:15.4
-    # no POSTGRES_PASSWORD in compose; wrapper sets it at runtime
+    # No POSTGRES_PASSWORD in compose; wrapper sets it at runtime
     secrets:
       - db_pwd
       - db_privkey
-    # keep data volume from base file; use tmpfs for init dir (good hygiene)
+    # Keep data volume from base file; use tmpfs for init dir (good hygiene)
     tmpfs:
       - /docker-entrypoint-initdb.d
 

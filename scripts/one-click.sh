@@ -277,7 +277,7 @@ EOF
             # write our expand-db-url script
             cat << 'EOF' > /usr/local/bin/expand-db-url.sh
 #!/usr/bin/env sh
-set -eux
+set -eu
 # Import the private key and decrypt the DB password
 gpg --batch --import /run/secrets/db_privkey
 DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
@@ -287,7 +287,6 @@ export IRIUS_DB_URL=\"\$IRIUS_DB_URL&password=\$DECRYPTED\"
 exec /entrypoint/dynamic-entrypoint.sh \"\$@\"
 EOF
         chmod +x /usr/local/bin/expand-db-url.sh; \
-        sleep 1
 "
 
         # Commit to a new image, resetting USER & ENTRYPOINT to the original Tomcat defaults

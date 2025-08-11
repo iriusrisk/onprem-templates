@@ -231,7 +231,7 @@ export POSTGRES_PASSWORD="${DECRYPTED}"
 unset DECRYPTED
 set -x
 
-exec /usr/local/bin/docker-entrypoint.sh "$@"
+exec docker-entrypoint.sh "$@"
 EOF
             chmod 0755 /usr/local/bin/pg-expand-secret.sh
             '

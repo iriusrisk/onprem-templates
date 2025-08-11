@@ -212,34 +212,34 @@ EOF
             PATCHED_IMAGE="localhost/postgres-gpg:15.4"
             TMP="temp-postgres"
 
-            # If patched image not present, or you want to refresh each time, rebuild:
-            if ! sudo podman image exists "$PATCHED_IMAGE"; then
-              sudo podman run --name "$TMP" --user root --entrypoint /bin/sh "$BASE_IMAGE" -c '
-                set -eu
-                if [ -f /etc/alpine-release ]; then apk add --no-cache gnupg; else
-                  apt-get update && apt-get install -y --no-install-recommends gnupg && rm -rf /var/lib/apt/lists/*; fi
-                cat > /usr/local/bin/pg-expand-secret.sh << "EOF"
-#!/usr/bin/env sh
-set -eu
-# Import private key and decrypt admin password (in memory)
-gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
-DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-# Don’t leak secrets to logs
-set +x
-export POSTGRES_PASSWORD="${DECRYPTED}"
-set -x
-# Hand off to the real postgres entrypoint
-exec /usr/local/bin/docker-entrypoint.sh "$@"
-EOF
-                chmod +x /usr/local/bin/pg-expand-secret.sh
-                sleep 1
-              '
-              sudo podman commit \
-                --change='USER postgres' \
-                --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
-                "$TMP" "$PATCHED_IMAGE"
-              sudo podman rm "$TMP"
-            fi
+            sudo podman rm -f "$TMP" 2>/dev/null || true
+            sudo podman run --name "$TMP" --user root --entrypoint /bin/sh "$BASE_IMAGE" -c '
+            set -eu
+            # install gpg
+            if [ -f /etc/alpine-release ]; then apk add --no-cache gnupg; else
+                apt-get update && apt-get install -y --no-install-recommends gnupg && rm -rf /var/lib/apt/lists/*; fi
+
+            # wrapper that decrypts secret then execs the real entrypoint
+            cat > /usr/local/bin/pg-expand-secret.sh << "EOF"
+            #!/usr/bin/env sh
+            set -eu
+            gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1
+            DECRYPTED=$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
+            # do not leak secrets
+            set +x
+            export POSTGRES_PASSWORD="${DECRYPTED}"
+            set -x
+            exec /usr/local/bin/docker-entrypoint.sh "$@"
+            EOF
+            chmod +x /usr/local/bin/pg-expand-secret.sh
+            '
+
+            # IMPORTANT: do NOT set USER; leave whatever the base image uses (root)
+            sudo podman commit \
+            --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
+            "$TMP" "$PATCHED_IMAGE"
+
+            sudo podman rm "$TMP"
 
             # Create a tiny override that mounts secrets and uses the patched image
             # (no plaintext in YAML; secrets are external)

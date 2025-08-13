@@ -596,7 +596,7 @@ function stop_disable_units_for_project() {
   done
 }
 
-teardown_by_project_label() {
+function teardown_by_project_label() {
   # Optional $1 = project name to scope; otherwise tears down *all* compose projects found.
   local proj="$1"
   local filter=()

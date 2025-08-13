@@ -230,18 +230,19 @@ EOF
 
         # Build commands
         COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
-        CLEAN_CMD="sudo podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
         UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
         PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
         # Clean up any existing containers and pod
         if [ "$($PS_CMD)" ]; then
             echo "Cleaning up existing containers for this project..."
-            eval "$CLEAN_CMD"
-            # Force‐remove any leftover containers by their container_name
-            for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
-                sudo podman rm -f "$svc" 2>/dev/null || true
-            done
+
+            # Stop/disable units for this compose project so nothing respawns
+            [ -n "$PROJECT_NAME" ] && stop_disable_units_for_project "$PROJECT_NAME" || stop_disable_units_for_project
+
+            # Hard teardown by project label (pods/containers/networks)
+            [ -n "$PROJECT_NAME" ] && teardown_by_project_label "$PROJECT_NAME" || teardown_by_project_label
+
         fi
 
         # Run the temporary container to perform modifications (nginx capabilities fix)

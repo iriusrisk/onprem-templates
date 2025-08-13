@@ -275,8 +275,8 @@ secrets:
 EOF
 
             # Teardown & clean data (fresh init)
-            sudo $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") -f "$PG_OVERRIDE" down --remove-orphans
-            sudo podman ps -aq --filter name=iriusrisk-postgres | xargs -r sudo podman rm -f
+            stop_disable_units_for_project "container-compose"
+            teardown_by_project_label "container-compose"
             sudo rm -rf ./postgres/data
 
             # Bring up just Postgres (with secrets override)
@@ -575,4 +575,44 @@ function build_compose_override() {
     fi
 
     echo "$files"
+}
+
+function stop_disable_units_for_project() {
+  # Stop/disable units for all containers that belong to *any* compose project(s)
+  # Optionally pass a project name to scope: stop_disable_units_for_project iriusrisk
+  local proj="$1"
+  local filter=()
+  [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
+  mapfile -t _units < <(
+    sudo podman ps --all "${filter[@]}" --format '{{.Names}}' |
+    awk '{print "container-" $1 ".service"}'
+  )
+  for u in "${_units[@]}"; do
+    if systemctl list-unit-files "$u" &>/dev/null; then
+      sudo systemctl stop "$u" 2>/dev/null || true
+      sudo systemctl disable "$u" 2>/dev/null || true
+      sudo systemctl reset-failed "$u" 2>/dev/null || true
+    fi
+  done
+}
+
+teardown_by_project_label() {
+  # Optional $1 = project name to scope; otherwise tears down *all* compose projects found.
+  local proj="$1"
+  local filter=()
+  [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
+
+  # Stop containers (extra safety if units weren’t present)
+  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman stop -t 15
+
+  # Remove pods first
+  sudo podman pod ps -aq "${filter[@]}" | xargs -r sudo podman pod rm -f
+
+  # Remove leftover containers
+  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman rm -f
+
+  # Remove orphaned networks for that project
+  sudo podman network ls --format '{{.Name}} {{.Labels}}' |
+    awk -v proj="$proj" '$0 ~ ("io.podman.compose.project=" proj) {print $1}' |
+    xargs -r sudo podman network rm -f
 }

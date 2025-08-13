@@ -238,11 +238,9 @@ EOF
             echo "Cleaning up existing containers for this project..."
 
             # Stop/disable units for this compose project so nothing respawns
-            [ -n "$PROJECT_NAME" ] && stop_disable_units_for_project "$PROJECT_NAME" || stop_disable_units_for_project
-
+            stop_disable_units_for_project "container-compose"
             # Hard teardown by project label (pods/containers/networks)
-            [ -n "$PROJECT_NAME" ] && teardown_by_project_label "$PROJECT_NAME" || teardown_by_project_label
-
+            teardown_by_project_label "container-compose"
         fi
 
         # Run the temporary container to perform modifications (nginx capabilities fix)

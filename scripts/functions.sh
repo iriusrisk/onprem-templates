@@ -582,7 +582,7 @@ function stop_disable_units_for_project() {
   local filter=()
   [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
   mapfile -t _units < <(
-    sudo podman ps -a "${filter[@]}" -f '{{.Names}}' |
+    sudo podman ps -a "${filter[@]}" --format '{{.Names}}' |
     awk '{print "container-" $1 ".service"}'
   )
   for u in "${_units[@]}"; do

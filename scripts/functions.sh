@@ -578,8 +578,6 @@ function build_compose_override() {
 }
 
 function stop_disable_units_for_project() {
-  # Stop/disable units for all containers that belong to *any* compose project(s)
-  # Optionally pass a project name to scope: stop_disable_units_for_project iriusrisk
   local proj="$1"
   local filter=()
   [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
@@ -597,19 +595,18 @@ function stop_disable_units_for_project() {
 }
 
 function teardown_by_project_label() {
-  # Optional $1 = project name to scope; otherwise tears down *all* compose projects found.
   local proj="$1"
   local filter=()
   [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
 
   # Stop containers (extra safety if units weren’t present)
-  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman stop -t 15
+  sudo podman ps -a -q "${filter[@]}" | xargs -r sudo podman stop -t 15
 
   # Remove pods first
-  sudo podman pod ps -aq "${filter[@]}" | xargs -r sudo podman pod rm -f
+  sudo podman pod ps -a -q "${filter[@]}" | xargs -r sudo podman pod rm -f
 
   # Remove leftover containers
-  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman rm -f
+  sudo podman ps -a -q "${filter[@]}" | xargs -r sudo podman rm -f
 
   # Remove orphaned networks for that project
   sudo podman network ls --format '{{.Name}} {{.Labels}}' |

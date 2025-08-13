@@ -246,6 +246,7 @@ EOF
 
             sudo podman commit \
             --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
+            --change='CMD ["postgres"]' \
             "$TMP" "$PATCHED_IMAGE"
 
             sudo podman rm "$TMP"
@@ -258,7 +259,7 @@ version: '3.7'
 services:
   postgres:
     image: localhost/postgres-gpg:15.4
-    # No POSTGRES_PASSWORD in compose; wrapper sets it at runtime
+    environment: {}   # wipes the inherited env map
     secrets:
       - db_pwd
       - db_privkey

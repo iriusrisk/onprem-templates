@@ -50,10 +50,10 @@ fi
 if echo "$PRE_ERRS" | grep -q "Java not found"; then
     install_java
 fi
-if ! command -v psql &>/dev/null; then
+if echo "$PRE_ERRS" | grep -q "psql is not installed"; then
     install_psql
 fi
-if ! command -v jq &>/dev/null; then
+if echo "$PRE_ERRS" | grep -q "jq is not installed"; then
     install_jq
 fi
 

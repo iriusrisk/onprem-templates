@@ -123,7 +123,7 @@ case "$CONTAINER_ENGINE" in
 esac
 
 # —————————————————————————————————————————————————————————————
-# 6. Check Java
+# 6. Check dependencies
 # —————————————————————————————————————————————————————————————
 if command -v java &>/dev/null; then
     JAVA_FULL_VER=$(java -version 2>&1 | head -n 1)
@@ -141,6 +141,22 @@ if command -v java &>/dev/null; then
     fi
 else
     msg="ERROR: Java not found"
+    echo "$msg"
+    ERRORS+=("$msg")
+fi
+
+if command -v psql &>/dev/null; then
+    echo "psql found."
+else
+    msg="ERROR: psql is not installed"
+    echo "$msg"
+    ERRORS+=("$msg")
+fi
+
+if command -v jq &>/dev/null; then
+    echo "jq found."
+else
+    msg="ERROR: jq is not installed"
     echo "$msg"
     ERRORS+=("$msg")
 fi
@@ -241,16 +257,10 @@ if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
     fi
 
     if [[ -n "$DB_IP" && -n "$DB_PASS" ]]; then
-        if command -v psql &>/dev/null; then
-            if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then
-                echo "Postgres connection to $DB_IP OK"
-            else
-                msg="ERROR: Could not connect to Postgres at $DB_IP with supplied password (check Postgres service, IP, and credentials)"
-                echo "$msg"
-                ERRORS+=("$msg")
-            fi
+        if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then
+            echo "Postgres connection to $DB_IP OK"
         else
-            msg="ERROR: 'psql' client is not installed (needed for preflight check of Postgres connectivity)"
+            msg="ERROR: Could not connect to Postgres at $DB_IP with supplied password (check Postgres service, IP, and credentials)"
             echo "$msg"
             ERRORS+=("$msg")
         fi

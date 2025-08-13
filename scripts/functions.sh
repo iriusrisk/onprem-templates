@@ -582,7 +582,7 @@ function stop_disable_units_for_project() {
   local filter=()
   [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
   mapfile -t _units < <(
-    sudo podman ps --all "${filter[@]}" --format '{{.Names}}' |
+    sudo podman ps -a "${filter[@]}" -f '{{.Names}}' |
     awk '{print "container-" $1 ".service"}'
   )
   for u in "${_units[@]}"; do
@@ -600,13 +600,13 @@ function teardown_by_project_label() {
   [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
 
   # Stop containers (extra safety if units weren’t present)
-  sudo podman ps -a -q "${filter[@]}" | xargs -r sudo podman stop -t 15
+  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman stop -t 15
 
   # Remove pods first
-  sudo podman pod ps -a -q "${filter[@]}" | xargs -r sudo podman pod rm -f
+  sudo podman pod ps -q "${filter[@]}" | xargs -r sudo podman pod rm -f
 
   # Remove leftover containers
-  sudo podman ps -a -q "${filter[@]}" | xargs -r sudo podman rm -f
+  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman rm -f
 
   # Remove orphaned networks for that project
   sudo podman network ls --format '{{.Name}} {{.Labels}}' |

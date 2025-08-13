@@ -304,7 +304,11 @@ EOF
         # Bring up containers
         eval "$UP_CMD"
 
-        containers=(iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module)
+        # List running container names for this project
+        mapfile -t containers < <(
+            sudo podman ps --filter "label=io.podman.compose.project=container-compose" \
+                        --format "{{.Names}}"
+        )
 
         # Generate systemd unit files
         for cname in "${containers[@]}"; do

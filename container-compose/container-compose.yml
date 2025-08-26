@@ -7,6 +7,7 @@ networks:
 services:
 
   startleft:
+    restart: unless-stopped
     environment:
       - IRIUS_SERVER=http://tomcat:8080
     image: docker.io/continuumsecurity/iriusrisk-prod:startleft
@@ -18,6 +19,7 @@ services:
     mem_limit: 2G
 
   reporting-module:
+    restart: unless-stopped
     image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
     container_name: reporting-module
     networks:

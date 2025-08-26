@@ -4,9 +4,9 @@ services:
 
   nginx:
     environment:
-      - NG_SERVER_NAME=${HOST_NAME}
+      - NG_SERVER_NAME=test.iriusrisk.com
 
   tomcat:
     environment:
-      - IRIUS_DB_URL=jdbc\:postgresql\://${POSTGRES_IP}\:5432/iriusprod?user\=iriusprod&password\=${POSTGRES_PASSWORD}
-      - IRIUS_EXT_URL=https\://${HOST_NAME}
+      - IRIUS_DB_URL=jdbc\:postgresql\://postgres\:5432/iriusprod?user\=iriusprod&password\=7Ubni3OKWMTA6ND64PVb
+      - IRIUS_EXT_URL=https\://test.iriusrisk.com

@@ -82,12 +82,26 @@ if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
         fi
     fi
 elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+    # Prefer podman (rootless) + podman compose plugin if present
     if ! command -v podman &>/dev/null; then
         install_podman
     fi
-    if ! command -v podman-compose &>/dev/null; then
-        install_podman
+
+    # Prefer the built-in `podman compose`, fallback to `podman-compose`
+    if podman compose version &>/dev/null; then
+        PODMAN_COMPOSE_CMD="podman compose"
+    else
+        if ! command -v podman-compose &>/dev/null; then
+            install_podman
+        fi
+        PODMAN_COMPOSE_CMD="podman-compose"
     fi
+
+    # Ensure we will run podman rootless as the invoking user (no sudo anywhere)
+    ROOTLESS_USER="${USER}"
+
+    # Rootless pre-reqs (linger, config dirs, networking)
+    setup_podman_rootless "${ROOTLESS_USER}"
 else
     echo "Unknown container engine: $CONTAINER_ENGINE"
     exit 1
@@ -225,123 +239,145 @@ EOF
         ;;
     podman)
         echo
-        echo "Deploying with Podman Compose..."
+        echo "Deploying with Podman Compose (rootless)..."
         cd "$CONTAINER_DIR"
 
-        # Build commands
+        # Build override flags once
         COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
-        UP_CMD="sudo podman-compose $COMPOSE_OVERRIDE up -d"
-        PS_CMD="sudo podman-compose $COMPOSE_OVERRIDE ps -q"
 
-        # Clean up any existing containers and pod
-        if [ "$($PS_CMD)" ]; then
-            echo "Cleaning up existing containers for this project..."
-
-            # Stop/disable units for this compose project so nothing respawns
-            stop_disable_units_for_project "container-compose"
-            # Hard teardown by project label (pods/containers/networks)
-            teardown_by_project_label "container-compose"
+        # Decide compose up/ps commands (rootless, without sudo)
+        if [[ "$PODMAN_COMPOSE_CMD" == "podman compose" ]]; then
+            UP_CMD="podman compose $COMPOSE_OVERRIDE up -d"
+            PS_CMD="podman compose $COMPOSE_OVERRIDE ps -q"
+            DOWN_CMD="podman compose $COMPOSE_OVERRIDE down"
+            GEN_SYSTEMD_CMD='podman generate systemd --files --new --name'
+        else
+            UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
+            PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
+            DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down"
+            # When using podman-compose, generate units from the containers/pod names later
+            GEN_SYSTEMD_CMD=''  # will fallback to per-container generation
         fi
 
-        # Run the temporary container to perform modifications (nginx capabilities fix)
-        sudo podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
-            -c "apk add libcap && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx && sleep 1"
+        # --- Clean up any existing stack for this project (rootless) ---
+        if [ "$($PS_CMD 2>/dev/null)" ]; then
+            echo "Cleaning up existing containers for this project..."
+            # Stop compose and make sure nothing lingers
+            $DOWN_CMD || true
+            teardown_rootless_project "container-compose"
+        fi
 
-        # Commit the changes to a new image
-        sudo podman commit \
+        # --- Image tweaks that used to run with sudo ---
+        # You can still run root inside the container in rootless mode, so commits are fine.
+        # (No host setcap calls here; we only modify the container image itself if needed.)
+        echo "Preparing custom images (rootless)..."
+        podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
+
+        # NGINX image: ensure it can bind <1024 inside the container.
+        # NOTE: Binding privileged ports on the HOST in rootless requires either:
+        #   - sysctl net.ipv4.ip_unprivileged_port_start=80  (your PoC), or
+        #   - using 8080/8443 on the host and fronting with a host-level redirect/proxy.
+        podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
+            -c "set -eu; \
+                if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
+                    (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
+                command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true; \
+                sleep 1"
+
+        podman commit \
             --change='USER nginx' \
             --change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
             temp-nginx \
             localhost/nginx-rhel
 
-        sudo podman rm temp-nginx
+        podman rm -f temp-nginx || true
         echo "Custom Nginx image created as localhost/nginx-rhel"
 
-        # Run a throw-away container as root and install gnupg
-        sudo podman run \
-        --name temp-tomcat \
-        --user root \
-        --entrypoint /bin/sh \
-        docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
-        -c "\
-            set -eu; \
-            # install gnupg
-            if [ -f /etc/alpine-release ]; then \
-                apk add --no-cache gnupg; \
-            else \
-                apt-get update && \
-                apt-get install -y --no-install-recommends gnupg && \
-                rm -rf /var/lib/apt/lists/*; \
-            fi; \
-            # write our expand-db-url script
-            cat << 'EOF' > /usr/local/bin/expand-db-url.sh
+        # TOMCAT wrapper to append decrypted DB pwd (unchanged logic, but rootless-safe)
+        podman run \
+            --name temp-tomcat \
+            --user root \
+            --entrypoint /bin/sh \
+            docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
+            -c "\
+                set -eu; \
+                if [ -f /etc/alpine-release ]; then \
+                    apk add --no-cache gnupg; \
+                else \
+                    apt-get update && \
+                    apt-get install -y --no-install-recommends gnupg && \
+                    rm -rf /var/lib/apt/lists/*; \
+                fi; \
+                cat << 'EOF' > /usr/local/bin/expand-db-url.sh
 #!/usr/bin/env sh
 set -eu
-# Import the private key and decrypt the DB password
 gpg --batch --import /run/secrets/db_privkey
 DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-
-# Append it to the URL and hand off to the real entrypoint
 export IRIUS_DB_URL=\"\$IRIUS_DB_URL&password=\$DECRYPTED\"
 exec /entrypoint/dynamic-entrypoint.sh \"\$@\"
 EOF
-        chmod +x /usr/local/bin/expand-db-url.sh; \
-"
+                chmod +x /usr/local/bin/expand-db-url.sh; \
+            "
 
-        # Commit to a new image, resetting USER & ENTRYPOINT to the original Tomcat defaults
-        sudo podman commit \
-        --change='USER tomcat' \
-        --change='ENTRYPOINT ["/usr/local/bin/expand-db-url.sh"]' \
-        temp-tomcat \
-        localhost/tomcat-rhel
+        podman commit \
+            --change='USER tomcat' \
+            --change='ENTRYPOINT ["/usr/local/bin/expand-db-url.sh"]' \
+            temp-tomcat \
+            localhost/tomcat-rhel
 
-        # Clean up
-        sudo podman rm temp-tomcat
-
+        podman rm -f temp-tomcat || true
         echo "Custom Tomcat created as localhost/tomcat-rhel"
 
-        # Bring up containers
+        # --- Bring up containers (rootless) ---
         eval "$UP_CMD"
 
-        # List running container names for this project
+        # List running container names for this project (rootless)
         mapfile -t containers < <(
-            sudo podman ps --filter "label=io.podman.compose.project=container-compose" \
-                        --format "{{.Names}}"
+            podman ps --filter "label=io.podman.compose.project=container-compose" \
+                      --format "{{.Names}}"
         )
 
-        # Generate systemd unit files
-        for cname in "${containers[@]}"; do
-            sudo podman generate systemd --name "$cname" --files --restart-policy=always
-        done
+        # --- Generate user-level systemd units ---
+        echo "Generating user systemd unit files..."
+        UNIT_DIR="$HOME/.config/systemd/user"
+        mkdir -p "$UNIT_DIR"
 
-        # Move, relabel, and modify service files as needed
-        for cname in "${containers[@]}"; do
-            svc="container-$cname.service"
+        if [[ -n "$GEN_SYSTEMD_CMD" ]]; then
+            # Generate units for the compose project (preferred when available)
+            $GEN_SYSTEMD_CMD iriusrisk-nginx
+            $GEN_SYSTEMD_CMD iriusrisk-tomcat
+            $GEN_SYSTEMD_CMD iriusrisk-startleft
+            $GEN_SYSTEMD_CMD reporting-module
+            # Move generated *.service files into user units dir
+            mv ./*.service "$UNIT_DIR"/ 2>/dev/null || true
+        else
+            # Fallback: per-container generation
+            for cname in "${containers[@]}"; do
+                podman generate systemd --files --new --name "$cname"
+            done
+            mv ./*.service "$UNIT_DIR"/ 2>/dev/null || true
+        fi
 
-            # If nginx, add dependency on tomcat before moving
-            if [[ "$cname" == "iriusrisk-nginx" ]]; then
-                # Insert After= dependency if not already present
-                if ! grep -q '^After=container-iriusrisk-tomcat.service' "$svc"; then
-                    sudo sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
-                fi
+        # Add dependency: nginx after tomcat (edit user unit)
+        if [[ -f "$UNIT_DIR/container-iriusrisk-nginx.service" ]]; then
+            if ! grep -q '^After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"; then
+                sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"
             fi
+        fi
 
-            # Move and relabel
-            sudo mv "$svc" /etc/systemd/system/
-            sudo /sbin/restorecon -v /etc/systemd/system/"$svc"
-        done
+        # Enable lingering so --user services keep running after logout
+        loginctl enable-linger "$ROOTLESS_USER" >/dev/null 2>&1 || true
 
-        # Now reload systemd units
-        sudo systemctl daemon-reload
-
-        # Enable and start services
+        # Reload and start user services
+        systemctl --user daemon-reload
         for cname in "${containers[@]}"; do
             svc="container-$cname.service"
-            sudo systemctl enable "$svc"
-            sudo systemctl restart "$svc"
+            systemctl --user enable "$svc" --now
         done
-        echo "Podman systemd services created and enabled"
+
+        echo "Podman rootless systemd user services created and enabled"
         ;;
+
     *)
         echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
         exit 1

@@ -178,9 +178,12 @@ function install_and_configure_postgres() {
             sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d postgres"
 
         elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-            # -------- Podman path: zero plaintext at rest with GPG + secrets --------
-            COMPOSE_TOOL="podman-compose"
-
+            # Prefer built-in compose
+            if podman compose version &>/dev/null; then
+                COMPOSE_TOOL="podman compose"
+            else
+                COMPOSE_TOOL="podman-compose"
+            fi
             # Ensure a GPG key exists for encryption
             GPG_EMAIL="db-secrets@iriusrisk.local"
             if ! gpg --list-keys "$GPG_EMAIL" >/dev/null 2>&1; then
@@ -202,9 +205,9 @@ EOF
             echo -n "$DB_PASS" | gpg --batch --yes --encrypt --recipient "$GPG_FP" --output db_pwd.gpg
             gpg --export-secret-keys --armor "$GPG_FP" > db_privkey.asc
 
-            sudo podman secret rm db_pwd db_privkey 2>/dev/null || true
-            sudo podman secret create --replace db_pwd db_pwd.gpg
-            sudo podman secret create --replace db_privkey db_privkey.asc
+            podman secret rm db_pwd db_privkey 2>/dev/null || true
+            podman secret create --replace db_pwd db_pwd.gpg
+            podman secret create --replace db_privkey db_privkey.asc
             rm -f db_pwd.gpg db_privkey.asc
 
             # Build/refresh a tiny postgres image that decrypts at runtime (no plaintext on disk)
@@ -212,9 +215,9 @@ EOF
             PATCHED_IMAGE="localhost/postgres-gpg:15.4"
             TMP="temp-postgres"
 
-            sudo podman rm -f "$TMP" 2>/dev/null || true
+            podman rm -f "$TMP" 2>/dev/null || true
 
-            sudo podman run \
+            podman run \
             --name  $TMP \
             --user root \
             --entrypoint /bin/sh \
@@ -244,12 +247,12 @@ EOF
             chmod +x /usr/local/bin/pg-expand-secret.sh; \
 "
 
-            sudo podman commit \
+            podman commit \
             --change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
             --change='CMD ["postgres"]' \
             "$TMP" "$PATCHED_IMAGE"
 
-            sudo podman rm "$TMP"
+            podman rm "$TMP"
 
             # Create a tiny override that mounts secrets and uses the patched image
             # (no plaintext in YAML; secrets are external)
@@ -275,12 +278,12 @@ secrets:
 EOF
 
             # Teardown & clean data (fresh init)
-            stop_disable_units_for_project "container-compose"
-            teardown_by_project_label "container-compose"
+            stop_disable_user_units_for_project "container-compose"
+            teardown_rootless_project "container-compose"
             sudo rm -rf ./postgres/data
 
             # Bring up just Postgres (with secrets override)
-            sudo $COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") -f "$PG_OVERRIDE" up -d postgres
+            eval "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") -f \"$PG_OVERRIDE\" up -d postgres"
         else
             echo "ERROR: Unsupported CONTAINER_ENGINE=$CONTAINER_ENGINE" >&2
             exit 1
@@ -289,12 +292,12 @@ EOF
         # Wait for readiness
         echo "Waiting for Postgres container to be ready..."
         timeout=60
-        until sudo $CONTAINER_ENGINE exec iriusrisk-postgres pg_isready -U "$PG_SUPERUSER" >/dev/null 2>&1; do
+        until $CONTAINER_ENGINE exec iriusrisk-postgres pg_isready -U "$PG_SUPERUSER" >/dev/null 2>&1; do
             sleep 2
             ((timeout--))
             if [ $timeout -le 0 ]; then
                 echo "ERROR: Postgres container did not become ready in time."
-                sudo $CONTAINER_ENGINE logs iriusrisk-postgres
+                $CONTAINER_ENGINE logs iriusrisk-postgres
                 exit 1
             fi
         done
@@ -307,10 +310,10 @@ EOF
             sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc \"SELECT 1 FROM pg_database WHERE datname = '$PG_DB'\" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE DATABASE $PG_DB WITH OWNER $PG_USER;\""
         else
             # Podman path: wrapper set superuser password to DB_PASS in-memory
-            sudo podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'" | grep -q 1 \
-              || sudo podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';"
-            sudo podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'" | grep -q 1 \
-              || sudo podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
+            podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'" | grep -q 1 \
+              || podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';"
+            podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'" | grep -q 1 \
+              || podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
         fi
 
         DB_IP="postgres" # service name on the compose network
@@ -444,45 +447,36 @@ function create_certificates() {
 }
 
 function is_logged_in_as_iriusrisk() {
-    local config=""
-    local auth_key=""
+    local config_candidates=()
+    local auth_key_dockerhub1="docker.io"
+    local auth_key_dockerhub2="https://index.docker.io/v1/"
     local auth_base64=""
     local auth_user=""
 
     if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
-        config="$HOME/.docker/config.json"
-        auth_key="https://index.docker.io/v1/"
+        config_candidates+=("$HOME/.docker/config.json")
     elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-        # For root, Podman stores auth at /run/containers/0/auth.json
-        if sudo test -f /run/containers/0/auth.json; then
-            config="/run/containers/0/auth.json"
-            auth_key="docker.io"
-        else
-            # Non-root Podman: uses ~/.docker/config.json
-            config="$HOME/.docker/config.json"
-            auth_key="https://index.docker.io/v1/"
+        # Rootful Podman (rare in our flow)
+        if sudo test -f /run/containers/0/auth.json 2>/dev/null; then
+            config_candidates+=("/run/containers/0/auth.json")
         fi
+        # Rootless Podman commonly uses this, but it can also use ~/.docker/config.json
+        config_candidates+=("$HOME/.config/containers/auth.json" "$HOME/.docker/config.json")
     else
-        echo "Unknown container engine: $CONTAINER_ENGINE" >&2
         return 2
     fi
 
-    if [[ ! -f "$config" ]]; then
-        return 1
-    fi
+    for cfg in "${config_candidates[@]}"; do
+        [[ -f "$cfg" ]] || continue
+        if [[ "$cfg" == "/run/containers/0/auth.json" ]]; then
+            auth_base64=$(sudo jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
+        else
+            auth_base64=$(jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
+        fi
+        [[ -n "$auth_base64" ]] && break
+    done
 
-    # Use sudo if needed
-    if [[ "$config" == "/run/containers/0/auth.json" ]]; then
-        auth_base64=$(sudo jq -r ".auths[\"$auth_key\"].auth // empty" "$config" 2>/dev/null)
-    else
-        auth_base64=$(jq -r ".auths[\"$auth_key\"].auth // empty" "$config" 2>/dev/null)
-    fi
-
-    if [[ -z "$auth_base64" ]]; then
-        return 1
-    fi
-
-    # Decode base64 and extract username
+    [[ -z "$auth_base64" ]] && return 1
     auth_user=$(echo "$auth_base64" | base64 -d 2>/dev/null | cut -d: -f1)
     [[ "$auth_user" == "iriusrisk" ]]
 }
@@ -500,7 +494,11 @@ function container_registry_login() {
     if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
         echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
     elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-        echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
+        if [[ "$(id -u)" -eq 0 ]]; then
+            echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
+        else
+            echo "$REGISTRY_PASS" | podman login -u iriusrisk docker.io --password-stdin
+        fi
     else
         echo "Unknown container engine: $CONTAINER_ENGINE" >&2
         return 1
@@ -577,39 +575,70 @@ function build_compose_override() {
     echo "$files"
 }
 
-function stop_disable_units_for_project() {
+function stop_disable_user_units_for_project() {
   local proj="$1"
-  local filter=()
-  [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
+
+  # Derive container names for the compose project, then map to user unit names
   mapfile -t _units < <(
-    sudo podman ps -a "${filter[@]}" --format '{{.Names}}' |
+    podman ps -a --filter "label=io.podman.compose.project=${proj}" --format '{{.Names}}' |
     awk '{print "container-" $1 ".service"}'
   )
+
   for u in "${_units[@]}"; do
-    if systemctl list-unit-files "$u" &>/dev/null; then
-      sudo systemctl stop "$u" 2>/dev/null || true
-      sudo systemctl disable "$u" 2>/dev/null || true
-      sudo systemctl reset-failed "$u" 2>/dev/null || true
-    fi
+    # Best-effort; units may or may not exist yet
+    systemctl --user stop "$u" 2>/dev/null || true
+    systemctl --user disable "$u" 2>/dev/null || true
+    systemctl --user reset-failed "$u" 2>/dev/null || true
   done
 }
 
-function teardown_by_project_label() {
-  local proj="$1"
-  local filter=()
-  [ -n "$proj" ] && filter+=(--filter "label=io.podman.compose.project=${proj}")
+# Teardown lingering resources for the project (rootless)
+teardown_rootless_project() {
+  local project="$1"
+  # Stop/remove containers,pods,networks belonging to the compose project label
+  # Best-effort cleanup; all rootless, no sudo
+  podman pod ls --format '{{.Name}} {{.Labels}}' \
+    | awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}' \
+    | xargs -r -n1 podman pod rm -f
 
-  # Stop containers (extra safety if units weren’t present)
-  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman stop -t 15
+  podman ps -a --format '{{.ID}} {{.Labels}}' \
+    | awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}' \
+    | xargs -r podman rm -f
 
-  # Remove pods first
-  sudo podman pod ps -q "${filter[@]}" | xargs -r sudo podman pod rm -f
+  podman network ls --format '{{.Name}} {{.Labels}}' \
+    | awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}' \
+    | xargs -r -n1 podman network rm
+}
 
-  # Remove leftover containers
-  sudo podman ps -aq "${filter[@]}" | xargs -r sudo podman rm -f
+# Rootless Podman prerequisites:
+# - enable linger so user services keep running
+# - ensure user config dirs exist
+# - (optional) allow binding to low ports; otherwise use 8080/8443 host ports
+setup_podman_rootless() {
+  local user="$1"
 
-  # Remove orphaned networks for that project
-  sudo podman network ls --format '{{.Name}} {{.Labels}}' |
-    awk -v proj="$proj" '$0 ~ ("io.podman.compose.project=" proj) {print $1}' |
-    xargs -r sudo podman network rm -f
+  # Ensure we are not root here
+  if [[ "$(id -u)" -eq 0 ]]; then
+    echo "Please run this script as a normal user for rootless Podman."
+    exit 1
+  fi
+
+  # Linger (requires sudo once)
+  if command -v loginctl >/dev/null 2>&1; then
+    if ! loginctl show-user "$user" 2>/dev/null | grep -q '^Linger=yes'; then
+      echo "Enabling linger for $user (requires sudo)..."
+      sudo loginctl enable-linger "$user"
+    fi
+  fi
+
+  # User config dir for podman
+  mkdir -p "/home/$user/.config/containers"
+  chown -R "$user:$user" "/home/$user/.config" 2>/dev/null || true
+
+  # Allow unprivileged to bind :80/:443 (host-wide)
+  if ! sysctl net.ipv4.ip_unprivileged_port_start | awk '{print $3}' | grep -qx '80'; then
+    echo "Configuring net.ipv4.ip_unprivileged_port_start=80 (requires sudo)..."
+    echo "net.ipv4.ip_unprivileged_port_start=80" | sudo tee -a /etc/sysctl.conf >/dev/null
+    sudo sysctl -p >/dev/null
+  fi
 }

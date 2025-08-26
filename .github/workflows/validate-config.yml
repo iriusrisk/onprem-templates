@@ -34,7 +34,7 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Validate docker-compose syntax
-        run: docker-compose -f container-compose/container-compose.yml -f container-compose/container-compose.override.yml -f container-compose/container-compose.saml.yml config
+        run: docker-compose -f container-compose/container-compose.yml -f container-compose/container-compose.docker.yml -f container-compose/container-compose.saml.yml config
 
       - name: Set up Python
         uses: actions/setup-python@v4

@@ -9,7 +9,7 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 7Ubni3OKWMTA6ND64PVb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - iriusrisk-frontend
     volumes:

@@ -98,7 +98,7 @@ elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
     fi
 
     # Ensure we will run podman rootless as the invoking user (no sudo anywhere)
-    ROOTLESS_USER="${USER}"
+    ROOTLESS_USER="$(resolve_rootless_user)"
 
     # Rootless pre-reqs (linger, config dirs, networking)
     setup_podman_rootless "${ROOTLESS_USER}"

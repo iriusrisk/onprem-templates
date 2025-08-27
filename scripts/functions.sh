@@ -642,3 +642,60 @@ setup_podman_rootless() {
     sudo sysctl -p >/dev/null
   fi
 }
+
+# Ask for a non-root, existing username
+function prompt_for_nonroot_user() {
+  local def=""
+  [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && def="$SUDO_USER"
+
+  while true; do
+    local prompt="Enter the non-root user to run Podman as"
+    local u=""
+    if [[ -n "$def" ]]; then
+      read -rp "$prompt [${def}]: " u
+      u="${u:-$def}"
+    else
+      read -rp "$prompt: " u
+    fi
+
+    if [[ -z "$u" ]]; then
+      echo "Please enter a username." >&2
+      continue
+    fi
+    if ! id "$u" &>/dev/null; then
+      echo "User '$u' does not exist." >&2
+      continue
+    fi
+    if [[ "$u" == "root" || "$(id -u "$u")" -eq 0 ]]; then
+      echo "Root is not allowed for rootless Podman." >&2
+      continue
+    fi
+    echo "$u"
+    return 0
+  done
+}
+
+# Resolve the rootless user, prompting if needed, and enforce we are that user
+function resolve_rootless_user() {
+  local u="${USER:-}"
+
+  # If USER is missing or root, prefer SUDO_USER (if present)
+  if [[ -z "$u" || "$u" == "root" ]]; then
+    [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && u="$SUDO_USER"
+  fi
+
+  # Still unknown? Prompt.
+  if [[ -z "$u" || "$u" == "root" ]]; then
+    u="$(prompt_for_nonroot_user)"
+  fi
+
+  # Rootless Podman must be run as the actual session user
+  local current="$(id -un)"
+  if [[ "$u" != "$current" ]]; then
+    echo "Selected user '$u' does not match current shell user '$current'." >&2
+    echo "Please re-run this script as '$u' (e.g., 'su - $u' or SSH as that user)." >&2
+    exit 1
+  fi
+
+  echo "$u"
+}

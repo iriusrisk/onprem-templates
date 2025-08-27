@@ -2,6 +2,13 @@
 source functions.sh
 set -e
 
+# Fallback for environments where $USER isn't set
+if [[ -z "${USER:-}" ]]; then
+  USER="$(id -un)"
+  export USER
+fi
+
+
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————
@@ -332,18 +339,14 @@ EOF
             [[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/
         done
 
+        # Harden generated user units for rootless Podman/runtime dir
         for cname in "${containers[@]}"; do
             svc="$UNIT_DIR/container-$cname.service"
             [[ -f "$svc" ]] || continue
-
-            # Ensure Podman uses the per-boot runtime dir and that dirs exist
             grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" || \
                 sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
-
             grep -q '^Environment=TMPDIR=%t' "$svc" || \
                 sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
-
-            # Create the subdirs under /run/user/<uid> before ExecStart
             grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" || \
                 sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
         done
@@ -354,7 +357,7 @@ EOF
                 sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"
             fi
         fi
-        
+
         # Ensure Podman uses per-boot runtime dir in interactive shells
         cat <<'EOF' >> ~/.bash_profile
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"

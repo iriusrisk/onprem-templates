@@ -622,14 +622,18 @@ function teardown_rootless_project() {
   done
 }
 
-# Rootless Podman prerequisites:
+# Rootless Podman prerequisites + per-boot runtime hardening
 # - enable linger so user services keep running
 # - ensure user config dirs exist
-# - (optional) allow binding to low ports; otherwise use 8080/8443 host ports
-function setup_podman_rootless() {
+# - allow low ports (80/443) unless you map 8080/8443
+# - create /run/user/<uid> subdirs + tmpfiles rules + symlinks from /tmp/storage-run-<uid>
+# - pin Podman runroot/tmp_dir under /run/user/<uid>
+# - persist shell env so systemctl --user & podman work in new sessions
+setup_podman_rootless() {
   local user="$1"
+  local uid="$(id -u "$user")"
 
-  # Ensure we are not root here
+  # Must run as the actual non-root user
   if [[ "$(id -u)" -eq 0 ]]; then
     echo "Please run this script as a normal user for rootless Podman."
     exit 1
@@ -639,20 +643,29 @@ function setup_podman_rootless() {
   if command -v loginctl >/dev/null 2>&1; then
     if ! loginctl show-user "$user" 2>/dev/null | grep -q '^Linger=yes'; then
       echo "Enabling linger for $user (requires sudo)..."
-      sudo loginctl enable-linger "$user"
+      sudo loginctl enable-linger "$user" || true
     fi
   fi
 
-  # User config dir for podman
+  # User config dir for Podman
   mkdir -p "/home/$user/.config/containers"
   chown -R "$user:$user" "/home/$user/.config" 2>/dev/null || true
 
-  # Allow unprivileged to bind :80/:443 (host-wide)
+  # Optional: allow unprivileged to bind :80/:443 (host-wide)
   if ! sysctl net.ipv4.ip_unprivileged_port_start | awk '{print $3}' | grep -qx '80'; then
     echo "Configuring net.ipv4.ip_unprivileged_port_start=80 (requires sudo)..."
     echo "net.ipv4.ip_unprivileged_port_start=80" | sudo tee -a /etc/sysctl.conf >/dev/null
     sudo sysctl -p >/dev/null
   fi
+
+  # Ensure /run/user/<uid> tree exists now and at every boot; link legacy /tmp paths
+  ensure_user_runtime_tmpfiles "$user" "$uid"
+
+  # Pin Podman to /run/user/<uid> (not /tmp)
+  configure_podman_user_dirs "$user" "$uid"
+
+  # Persist login environment (SSH, sudo -i) so systemctl --user/podman work in fresh sessions
+  persist_login_env
 }
 
 # Ask for a non-root, existing username
@@ -687,21 +700,22 @@ function prompt_for_nonroot_user() {
   done
 }
 
-# Resolve the rootless user, prompting if needed, and enforce we are that user
+# Resolve the non-root user for rootless Podman.
+# Uses $USER if set, otherwise falls back to id -un. Prompts only if still root/unknown.
 function resolve_rootless_user() {
-  local u="${USER:-}"
+  local u="${USER:-$(id -un)}"
 
-  # If USER is missing or root, prefer SUDO_USER (if present)
-  if [[ -z "$u" || "$u" == "root" ]]; then
-    [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && u="$SUDO_USER"
+  # If running via sudo, prefer the invoking user
+  if [[ "$u" == "root" && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    u="$SUDO_USER"
   fi
 
-  # Still unknown? Prompt.
+  # Prompt only if still empty or root
   if [[ -z "$u" || "$u" == "root" ]]; then
     u="$(prompt_for_nonroot_user)"
   fi
 
-  # Rootless Podman must be run as the actual session user
+  # Ensure the shell user matches (rootless Podman must run as that user)
   local current="$(id -un)"
   if [[ "$u" != "$current" ]]; then
     echo "Selected user '$u' does not match current shell user '$current'." >&2
@@ -738,4 +752,66 @@ function ensure_user_systemd_ready() {
 
   # Test a no-op command; return success if it works
   systemctl --user show-environment >/dev/null 2>&1
+}
+
+# Create per-boot runtime dirs and tmpfiles rules; wire legacy /tmp paths back into /run/user
+ensure_user_runtime_tmpfiles() {
+  local user="$1"; local uid="$2"
+
+  # Create runtime dirs now and fix ownership
+  sudo mkdir -p "/run/user/$uid/containers" "/run/user/$uid/libpod/tmp"
+  sudo chown -R "$user:$user" "/run/user/$uid"
+  sudo chmod 700 "/run/user/$uid" "/run/user/$uid/libpod" "/run/user/$uid/libpod/tmp" "/run/user/$uid/containers" 2>/dev/null || true
+
+  # Replace any old real dirs with symlinks to /run/user/<uid>/...
+  sudo rm -rf "/tmp/storage-run-$uid/containers" "/tmp/storage-run-$uid/libpod/tmp" 2>/dev/null || true
+  sudo mkdir -p "/tmp/storage-run-$uid"
+  sudo ln -sfn "/run/user/$uid/containers"  "/tmp/storage-run-$uid/containers"
+  sudo ln -sfn "/run/user/$uid/libpod/tmp" "/tmp/storage-run-$uid/libpod/tmp"
+
+  # Persist across reboots via tmpfiles
+  sudo tee "/etc/tmpfiles.d/podman-rootless-${uid}.conf" >/dev/null <<EOF
+# Ensure the per-user runtime dir exists on boot
+d /run/user/${uid} 0700 ${user} ${user} -
+d /run/user/${uid}/containers 0700 ${user} ${user} -
+d /run/user/${uid}/libpod 0700 ${user} ${user} -
+d /run/user/${uid}/libpod/tmp 0700 ${user} ${user} -
+# Redirect legacy tmp paths used by older Podman fallbacks
+L /tmp/storage-run-${uid}/containers - - - - /run/user/${uid}/containers
+L /tmp/storage-run-${uid}/libpod/tmp - - - - /run/user/${uid}/libpod/tmp
+EOF
+  sudo systemd-tmpfiles --create "/etc/tmpfiles.d/podman-rootless-${uid}.conf"
+}
+
+# Force Podman to use /run/user/<uid> for runroot/tmp_dir (rootless)
+configure_podman_user_dirs() {
+  local user="$1"; local uid="$2"
+  local confdir="/home/$user/.config/containers"
+  mkdir -p "$confdir"
+
+  cat > "$confdir/storage.conf" <<EOF
+[storage]
+driver="overlay"
+runroot="/run/user/${uid}/containers"
+graphroot="$HOME/.local/share/containers/storage"
+EOF
+
+  cat > "$confdir/containers.conf" <<EOF
+[engine]
+tmp_dir="/run/user/${uid}/libpod/tmp"
+EOF
+
+  chown -R "$user:$user" "$confdir" 2>/dev/null || true
+}
+
+# Ensure shells (SSH, sudo -i) export the bus/runtime env
+persist_login_env() {
+  # profile snippet for interactive shells
+  sudo tee /etc/profile.d/10-xdg-user-bus.sh >/dev/null <<'EOF'
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+export DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}
+export TMPDIR=${TMPDIR:-$XDG_RUNTIME_DIR}
+EOF
+  # keep vars across sudo
+  echo 'Defaults env_keep += "XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS TMPDIR"' | sudo tee /etc/sudoers.d/keep-xdg >/dev/null
 }

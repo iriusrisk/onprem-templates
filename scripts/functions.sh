@@ -277,7 +277,15 @@ secrets:
     external: true
 EOF
 
-            # Teardown & clean data (fresh init)
+            # --- Graceful down then hard teardown for a clean slate ---
+            # Bring down anything that may be up for this project (best effort)
+            compose_files="-f $(basename "$POSTGRES_FILE")"
+            if [[ -n "${PG_OVERRIDE:-}" && -f "$PG_OVERRIDE" ]]; then
+                compose_files="$compose_files -f \"$PG_OVERRIDE\""
+            fi
+            compose_down_rootless "container-compose" "$compose_files"
+
+            # Stop user units (rootless) and forcefully clean up the project
             stop_disable_user_units_for_project "container-compose"
             teardown_rootless_project "container-compose"
             sudo rm -rf ./postgres/data
@@ -592,29 +600,42 @@ function stop_disable_user_units_for_project() {
   done
 }
 
-# Teardown lingering resources for the project (rootless)
-teardown_rootless_project() {
+# Teardown lingering resources for the project (rootless), including networks
+function teardown_rootless_project() {
   local project="$1"
-  # Stop/remove containers,pods,networks belonging to the compose project label
-  # Best-effort cleanup; all rootless, no sudo
-  podman pod ls --format '{{.Name}} {{.Labels}}' \
-    | awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}' \
-    | xargs -r -n1 podman pod rm -f
 
-  podman ps -a --format '{{.ID}} {{.Labels}}' \
-    | awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}' \
-    | xargs -r podman rm -f
+  # Remove pods (and their infra containers)
+  mapfile -t pods < <(podman pod ps -q --filter "label=io.podman.compose.project=${project}")
+  if ((${#pods[@]})); then
+    podman pod rm -f "${pods[@]}" 2>/dev/null || true
+  fi
 
-  podman network ls --format '{{.Name}} {{.Labels}}' \
-    | awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}' \
-    | xargs -r -n1 podman network rm
+  # Remove any leftover containers for the project
+  mapfile -t ctrs < <(podman ps -aq --filter "label=io.podman.compose.project=${project}")
+  if ((${#ctrs[@]})); then
+    podman rm -f "${ctrs[@]}" 2>/dev/null || true
+  fi
+
+  # Now handle project networks: detach any stragglers then rm -f
+  mapfile -t nets < <(
+    podman network ls --format '{{.Name}} {{.Labels}}' |
+    awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}'
+  )
+  for net in "${nets[@]}"; do
+    # If anything (even unlabeled) is still attached, remove it first
+    mapfile -t onnet < <(podman ps -aq --filter "network=${net}")
+    if ((${#onnet[@]})); then
+      podman rm -f "${onnet[@]}" 2>/dev/null || true
+    fi
+    podman network rm -f "$net" 2>/dev/null || true
+  done
 }
 
 # Rootless Podman prerequisites:
 # - enable linger so user services keep running
 # - ensure user config dirs exist
 # - (optional) allow binding to low ports; otherwise use 8080/8443 host ports
-setup_podman_rootless() {
+function setup_podman_rootless() {
   local user="$1"
 
   # Ensure we are not root here
@@ -701,7 +722,7 @@ function resolve_rootless_user() {
 }
 
 # Ensure a user systemd instance is running and accessible from this shell
-ensure_user_systemd_ready() {
+function ensure_user_systemd_ready() {
   local user="${1:-$(id -un)}"
   local uid="$(id -u "$user")"
 
@@ -726,4 +747,27 @@ ensure_user_systemd_ready() {
 
   # Test a no-op command; return success if it works
   systemctl --user show-environment >/dev/null 2>&1
+}
+
+# Gracefully bring a rootless compose project down (if any)
+# Usage: compose_down_rootless "container-compose" "--files list here..."
+function compose_down_rootless() {
+  local project="$1"; shift
+  local files="$*"
+
+  if podman compose version &>/dev/null; then
+    # Try with provided files; if none, just do plain down on the project
+    if [[ -n "$files" ]]; then
+      eval "podman compose $files down --remove-orphans" || true
+    else
+      # best-effort: try to down by label (podman compose doesn't take project label directly)
+      podman compose down --remove-orphans 2>/dev/null || true
+    fi
+  elif command -v podman-compose &>/dev/null; then
+    if [[ -n "$files" ]]; then
+      podman-compose $files down --remove-orphans || true
+    else
+      podman-compose down --remove-orphans || true
+    fi
+  fi
 }

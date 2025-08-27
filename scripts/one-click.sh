@@ -335,9 +335,17 @@ EOF
         for cname in "${containers[@]}"; do
             svc="$UNIT_DIR/container-$cname.service"
             [[ -f "$svc" ]] || continue
-            # Inject environment so Podman keeps tmp under /run/user/<uid>
+
+            # Ensure Podman uses the per-boot runtime dir and that dirs exist
+            grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" || \
+                sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
+
             grep -q '^Environment=TMPDIR=%t' "$svc" || \
-                sed -i '/^\[Service\]/a Environment=TMPDIR=%t\nEnvironment=XDG_RUNTIME_DIR=%t' "$svc"
+                sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
+
+            # Create the subdirs under /run/user/<uid> before ExecStart
+            grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" || \
+                sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
         done
 
         # Add dependency: nginx after tomcat (edit user unit if present)
@@ -346,6 +354,12 @@ EOF
                 sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"
             fi
         fi
+        
+        # Ensure Podman uses per-boot runtime dir in interactive shells
+        cat <<'EOF' >> ~/.bash_profile
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export TMPDIR="${TMPDIR:-$XDG_RUNTIME_DIR}"
+EOF
 
         # Ensure user systemd is up, then enable
         if ! ensure_user_systemd_ready "$(id -un)"; then

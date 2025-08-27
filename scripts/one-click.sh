@@ -369,11 +369,22 @@ EOF
         loginctl enable-linger "$ROOTLESS_USER" >/dev/null 2>&1 || true
 
         # Reload and start user services
-        systemctl --user daemon-reload
+        if ! ensure_user_systemd_ready "$(id -un)"; then
+            echo "WARNING: Could not talk to user systemd right now."
+            echo "Services were generated at: $UNIT_DIR"
+            echo "To enable them later (as $(id -un)), run:"
+            echo "  systemctl --user daemon-reload"
         for cname in "${containers[@]}"; do
-            svc="container-$cname.service"
-            systemctl --user enable "$svc" --now
+            echo "  systemctl --user enable --now container-$cname.service"
         done
+        # Don't hard-fail the deployment; containers are already up via compose
+        else
+            systemctl --user daemon-reload
+            for cname in "${containers[@]}"; do
+                svc="container-$cname.service"
+                systemctl --user enable "$svc" --now
+            done
+        fi
 
         echo "Podman rootless systemd user services created and enabled"
         ;;

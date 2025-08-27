@@ -699,3 +699,31 @@ function resolve_rootless_user() {
 
   echo "$u"
 }
+
+# Ensure a user systemd instance is running and accessible from this shell
+ensure_user_systemd_ready() {
+  local user="${1:-$(id -un)}"
+  local uid="$(id -u "$user")"
+
+  # Make sure linger is on and the user manager is started (needs sudo once)
+  if command -v loginctl >/dev/null 2>&1; then
+    if ! loginctl show-user "$user" 2>/dev/null | grep -q '^Linger=yes'; then
+      echo "Enabling linger for $user (requires sudo)..."
+      sudo loginctl enable-linger "$user" || true
+    fi
+    # Start the user manager now (so we don't need a relogin)
+    sudo loginctl start-user "$user" 2>/dev/null || true
+  fi
+
+  # Ensure XDG_RUNTIME_DIR points to the user runtime dir
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+
+  # Wait briefly for the user bus socket to appear
+  for _ in {1..20}; do
+    [[ -S "$XDG_RUNTIME_DIR/systemd/private" ]] && break
+    sleep 0.2
+  done
+
+  # Test a no-op command; return success if it works
+  systemctl --user show-environment >/dev/null 2>&1
+}

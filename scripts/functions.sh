@@ -178,12 +178,7 @@ function install_and_configure_postgres() {
             sg docker -c "$COMPOSE_TOOL -f $(basename "$POSTGRES_FILE") up -d postgres"
 
         elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-            # Prefer built-in compose
-            if podman compose version &>/dev/null; then
-                COMPOSE_TOOL="podman compose"
-            else
-                COMPOSE_TOOL="podman-compose"
-            fi
+            COMPOSE_TOOL="podman-compose"
             # Ensure a GPG key exists for encryption
             GPG_EMAIL="db-secrets@iriusrisk.local"
             if ! gpg --list-keys "$GPG_EMAIL" >/dev/null 2>&1; then
@@ -283,7 +278,7 @@ EOF
             if [[ -n "${PG_OVERRIDE:-}" && -f "$PG_OVERRIDE" ]]; then
                 compose_files="$compose_files -f \"$PG_OVERRIDE\""
             fi
-            compose_down_rootless "container-compose" "$compose_files"
+            podman-compose $compose_files down --remove-orphans || true
 
             # Stop user units (rootless) and forcefully clean up the project
             stop_disable_user_units_for_project "container-compose"
@@ -747,27 +742,4 @@ function ensure_user_systemd_ready() {
 
   # Test a no-op command; return success if it works
   systemctl --user show-environment >/dev/null 2>&1
-}
-
-# Gracefully bring a rootless compose project down (if any)
-# Usage: compose_down_rootless "container-compose" "--files list here..."
-function compose_down_rootless() {
-  local project="$1"; shift
-  local files="$*"
-
-  if podman compose version &>/dev/null; then
-    # Try with provided files; if none, just do plain down on the project
-    if [[ -n "$files" ]]; then
-      eval "podman compose $files down --remove-orphans" || true
-    else
-      # best-effort: try to down by label (podman compose doesn't take project label directly)
-      podman compose down --remove-orphans 2>/dev/null || true
-    fi
-  elif command -v podman-compose &>/dev/null; then
-    if [[ -n "$files" ]]; then
-      podman-compose $files down --remove-orphans || true
-    else
-      podman-compose down --remove-orphans || true
-    fi
-  fi
 }

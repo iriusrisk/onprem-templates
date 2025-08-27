@@ -82,19 +82,12 @@ if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
         fi
     fi
 elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-    # Prefer podman (rootless) + podman compose plugin if present
+    # Install podman if missing
     if ! command -v podman &>/dev/null; then
         install_podman
     fi
-
-    # Prefer the built-in `podman compose`, fallback to `podman-compose`
-    if podman compose version &>/dev/null; then
-        PODMAN_COMPOSE_CMD="podman compose"
-    else
-        if ! command -v podman-compose &>/dev/null; then
-            install_podman
-        fi
-        PODMAN_COMPOSE_CMD="podman-compose"
+    if ! command -v podman-compose &>/dev/null; then
+        install_podman
     fi
 
     # Ensure we will run podman rootless as the invoking user (no sudo anywhere)
@@ -246,24 +239,16 @@ EOF
         COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
 
         # Decide compose up/ps commands (rootless, without sudo)
-        if [[ "$PODMAN_COMPOSE_CMD" == "podman compose" ]]; then
-            UP_CMD="podman compose $COMPOSE_OVERRIDE up -d"
-            PS_CMD="podman compose $COMPOSE_OVERRIDE ps -q"
-            DOWN_CMD="podman compose $COMPOSE_OVERRIDE down"
-            GEN_SYSTEMD_CMD='podman generate systemd --files --new --name'
-        else
-            UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
-            PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
-            DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down"
-            # When using podman-compose, generate units from the containers/pod names later
-            GEN_SYSTEMD_CMD=''  # will fallback to per-container generation
-        fi
+        UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
+        PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
+        DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
 
         # --- Clean up any existing stack for this project (rootless) ---
         if [ "$($PS_CMD 2>/dev/null)" ]; then
             echo "Cleaning up existing containers for this project..."
             # Stop compose and make sure nothing lingers
             $DOWN_CMD || true
+            stop_disable_user_units_for_project "container-compose"
             teardown_rootless_project "container-compose"
         fi
 
@@ -337,52 +322,37 @@ EOF
                       --format "{{.Names}}"
         )
 
-        # --- Generate user-level systemd units ---
+        # Generate user systemd units per container
         echo "Generating user systemd unit files..."
         UNIT_DIR="$HOME/.config/systemd/user"
         mkdir -p "$UNIT_DIR"
+        for cname in "${containers[@]}"; do
+            podman generate systemd --files --new --name "$cname" \
+                2> >(grep -v "DEPRECATED command" >&2)
+            [[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/
+        done
 
-        if [[ -n "$GEN_SYSTEMD_CMD" ]]; then
-            # Generate units for the compose project (preferred when available)
-            $GEN_SYSTEMD_CMD iriusrisk-nginx
-            $GEN_SYSTEMD_CMD iriusrisk-tomcat
-            $GEN_SYSTEMD_CMD iriusrisk-startleft
-            $GEN_SYSTEMD_CMD reporting-module
-            # Move generated *.service files into user units dir
-            mv ./*.service "$UNIT_DIR"/ 2>/dev/null || true
-        else
-            # Fallback: per-container generation
-            for cname in "${containers[@]}"; do
-                podman generate systemd --files --new --name "$cname"
-            done
-            mv ./*.service "$UNIT_DIR"/ 2>/dev/null || true
-        fi
-
-        # Add dependency: nginx after tomcat (edit user unit)
+        # Add dependency: nginx after tomcat (edit user unit if present)
         if [[ -f "$UNIT_DIR/container-iriusrisk-nginx.service" ]]; then
             if ! grep -q '^After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"; then
                 sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"
             fi
         fi
 
-        # Enable lingering so --user services keep running after logout
-        loginctl enable-linger "$ROOTLESS_USER" >/dev/null 2>&1 || true
-
-        # Reload and start user services
+        # Ensure user systemd is up, then enable
         if ! ensure_user_systemd_ready "$(id -un)"; then
             echo "WARNING: Could not talk to user systemd right now."
-            echo "Services were generated at: $UNIT_DIR"
-            echo "To enable them later (as $(id -un)), run:"
+            echo "Units are at $UNIT_DIR. Enable later with:"
             echo "  systemctl --user daemon-reload"
-        for cname in "${containers[@]}"; do
-            echo "  systemctl --user enable --now container-$cname.service"
-        done
-        # Don't hard-fail the deployment; containers are already up via compose
+            for cname in "${containers[@]}"; do
+                echo "  systemctl --user enable --now container-$cname.service"
+            done
         else
             systemctl --user daemon-reload
             for cname in "${containers[@]}"; do
                 svc="container-$cname.service"
-                systemctl --user enable "$svc" --now
+                [[ -f "$UNIT_DIR/$svc" ]] && systemctl --user enable "$svc" --now || \
+                echo "Skipping enable for $cname (no unit file)."
             done
         fi
 

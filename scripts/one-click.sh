@@ -332,6 +332,14 @@ EOF
             [[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/
         done
 
+        for cname in "${containers[@]}"; do
+            svc="$UNIT_DIR/container-$cname.service"
+            [[ -f "$svc" ]] || continue
+            # Inject environment so Podman keeps tmp under /run/user/<uid>
+            grep -q '^Environment=TMPDIR=%t' "$svc" || \
+                sed -i '/^\[Service\]/a Environment=TMPDIR=%t\nEnvironment=XDG_RUNTIME_DIR=%t' "$svc"
+        done
+
         # Add dependency: nginx after tomcat (edit user unit if present)
         if [[ -f "$UNIT_DIR/container-iriusrisk-nginx.service" ]]; then
             if ! grep -q '^After=container-iriusrisk-tomcat.service' "$UNIT_DIR/container-iriusrisk-nginx.service"; then

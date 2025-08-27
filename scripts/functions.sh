@@ -274,11 +274,7 @@ EOF
 
             # --- Graceful down then hard teardown for a clean slate ---
             # Bring down anything that may be up for this project (best effort)
-            compose_files="-f $(basename "$POSTGRES_FILE")"
-            if [[ -n "${PG_OVERRIDE:-}" && -f "$PG_OVERRIDE" ]]; then
-                compose_files="$compose_files -f \"$PG_OVERRIDE\""
-            fi
-            podman-compose $compose_files down --remove-orphans || true
+            podman-compose -f "$(basename "$POSTGRES_FILE")" -f "$PG_OVERRIDE" down --remove-orphans || true
 
             # Stop user units (rootless) and forcefully clean up the project
             stop_disable_user_units_for_project "container-compose"

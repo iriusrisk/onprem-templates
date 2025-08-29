@@ -72,9 +72,9 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 
 2. **Run the bootstrap installer**:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/iriusrisk/onprem-templates/main/scripts/bootstrap.sh -o bootstrap.sh
-chmod +x bootstrap.sh
-./bootstrap.sh
+    curl -fsSL https://raw.githubusercontent.com/iriusrisk/onprem-templates/main/scripts/bootstrap.sh -o bootstrap.sh
+    chmod +x bootstrap.sh
+    ./bootstrap.sh
    ```
 
    This will:

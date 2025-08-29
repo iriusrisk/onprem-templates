@@ -89,7 +89,7 @@ case "$CONTAINER_ENGINE" in
         if command -v docker &>/dev/null; then
             echo "Docker found."
             check_version docker "$REQUIRED_DOCKER"
-            if check_command docker-compose; then
+            if command -v docker-compose &>/dev/null; then
                 check_version docker-compose "$REQUIRED_DOCKER_COMPOSE"
             else
                 msg="ERROR: 'docker-compose' is not installed."
@@ -106,7 +106,7 @@ case "$CONTAINER_ENGINE" in
         if command -v podman &>/dev/null; then
             echo "Podman found."
             check_version podman "$REQUIRED_PODMAN"
-            if ! check_command podman-compose; then
+            if ! command -v podman-compose &>/dev/null; then
                 msg="ERROR: 'podman-compose' is not installed."
                 echo "$msg"
                 ERRORS+=("$msg")

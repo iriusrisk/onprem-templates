@@ -146,6 +146,19 @@ function install_psql() {
     fi
 }
 
+function install_jq() {
+    echo "Installing jq (for JSON parsing)..."
+    if command -v apt-get &>/dev/null; then
+        sudo apt-get update
+        sudo apt-get install -y jq
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y jq
+    else
+        echo "Please install jq manually." >&2
+        exit 1
+    fi
+}
+
 function install_and_configure_postgres() {
     local mode="$1"      # "container" or "host"
     PG_USER="iriusprod"
@@ -405,19 +418,6 @@ EOF
     fi
 }
 
-function install_jq() {
-    echo "Installing jq (for JSON parsing)..."
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update
-        sudo apt-get install -y jq
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y jq
-    else
-        echo "Please install jq manually." >&2
-        exit 1
-    fi
-}
-
 # —————————————————————————————————————————————————————————————
 # Logging (parent-aware)
 # —————————————————————————————————————————————————————————————
@@ -573,16 +573,6 @@ function trim() {
     var="${var#"${var%%[![:space:]]*}"}"
     var="${var%"${var##*[![:space:]]}"}"
     echo -n "$var"
-}
-
-function check_command() {
-    if ! command -v "$1" &>/dev/null; then
-        msg="ERROR: '$1' is not installed."
-        echo "$msg"
-        ERRORS+=("$msg")
-        return 1
-    fi
-    return 0
 }
 
 function check_version() {

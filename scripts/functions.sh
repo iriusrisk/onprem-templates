@@ -19,23 +19,44 @@ function prompt_yn() {
 }
 
 function prompt_engine() {
-    # Helper to lowercase a string (Bash 4+)
-    to_lower() { echo "$1" | tr '[:upper:]' '[:lower:]'; }
-
-    # If already set and valid, use it
+    # If already set and valid, skip prompting
     if [[ "$CONTAINER_ENGINE" =~ ^(docker|podman)$ ]]; then
-        CONTAINER_ENGINE="$CONTAINER_ENGINE"
-        echo "Using container engine: $CONTAINER_ENGINE"
-    else
-        if is_rhel_like; then
-            echo "Only Podman is supported on your system. Using Podman."
-            CONTAINER_ENGINE="podman"
-        else
-            echo "Only Docker is supported on your system. Using Docker."
-            CONTAINER_ENGINE="docker"
-        fi
+        echo "✅ Using container engine from environment: $CONTAINER_ENGINE"
+        export CONTAINER_ENGINE
+        return 0
     fi
+
+    # Detect default based on OS
+    local default_engine
+    if is_rhel_like; then
+        default_engine="podman"
+    else
+        default_engine="docker"
+    fi
+
+    # Ask user
+    echo "Which container engine would you like to use?"
+    echo "  docker"
+    echo "  podman"
+    echo
+    read -rp "Enter engine [default: $default_engine]: " choice
+    choice="${choice,,}"   # lowercase
+
+    # Use default if empty
+    if [[ -z "$choice" ]]; then
+        choice="$default_engine"
+    fi
+
+    # Validate
+    if [[ ! "$choice" =~ ^(docker|podman)$ ]]; then
+        echo "❌ Invalid choice: $choice"
+        echo "Please enter 'docker' or 'podman'."
+        exit 1
+    fi
+
+    CONTAINER_ENGINE="$choice"
     export CONTAINER_ENGINE
+    echo "✅ Using container engine: $CONTAINER_ENGINE"
 }
 
 function prompt_postgres_option() {
@@ -498,15 +519,33 @@ function create_certificates() {
     EC_KEY_FILE="$CERT_DIR/ec_private.pem"
     local hostname="${1:-$(hostname -f)}"
 
-    echo "🔑 Generating RSA SSL certificate..."
-    openssl req -newkey rsa:2048 -nodes -keyout "$KEY_FILE" -x509 -days 365 -out "$CERT_FILE" -subj "/CN=$hostname"
-    chmod 644 "$CERT_FILE" "$KEY_FILE"
+    mkdir -p "$CERT_DIR"
 
-    echo "🔑 Generating EC private key..."
-    openssl ecparam -genkey -name prime256v1 -noout -out "$EC_KEY_FILE"
-    chmod 644 "$EC_KEY_FILE"
-    
-    echo "Certificates generated at $CERT_DIR"
+    # RSA cert/key pair
+    if [[ -f "$CERT_FILE" && -f "$KEY_FILE" ]]; then
+        echo "✅ RSA certificate and key already exist at $CERT_DIR (skipping)."
+    else
+        echo "🔑 Generating RSA SSL certificate..."
+        openssl req -newkey rsa:2048 -nodes \
+            -keyout "$KEY_FILE" \
+            -x509 -days 365 \
+            -out "$CERT_FILE" \
+            -subj "/CN=$hostname"
+        chmod 644 "$CERT_FILE" "$KEY_FILE"
+        echo "✅ RSA certificate and key created in $CERT_DIR."
+    fi
+
+    # EC private key
+    if [[ -f "$EC_KEY_FILE" ]]; then
+        echo "✅ EC private key already exists at $EC_KEY_FILE (skipping)."
+    else
+        echo "🔑 Generating EC private key..."
+        openssl ecparam -genkey -name prime256v1 -noout -out "$EC_KEY_FILE"
+        chmod 644 "$EC_KEY_FILE"
+        echo "✅ EC private key created at $EC_KEY_FILE."
+    fi
+
+    echo "📄 Certificates present in $CERT_DIR"
 }
 
 function is_logged_in_as_iriusrisk() {

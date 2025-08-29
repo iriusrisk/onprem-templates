@@ -8,6 +8,8 @@ if [[ -z "${USER:-}" ]]; then
   export USER
 fi
 
+init_logging "$0"
+
 
 # —————————————————————————————————————————————————————————————
 # Script Start

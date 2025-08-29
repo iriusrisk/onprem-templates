@@ -2,6 +2,8 @@
 source functions.sh
 set -e
 
+init_logging "$0"
+
 echo "IriusRisk On-Premise Interactive Setup Wizard"
 echo "--------------------------------------------"
 

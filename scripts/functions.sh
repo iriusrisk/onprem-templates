@@ -419,6 +419,69 @@ function install_jq() {
 }
 
 # —————————————————————————————————————————————————————————————
+# Logging (parent-aware)
+# —————————————————————————————————————————————————————————————
+# Effect:
+#  - Creates ../logs (relative to the calling script) or ./logs as fallback
+#  - Top-level script decides the log name once: <script>_YYYY-MM-DD_HH-MM-SS.log
+#  - Child scripts inherit FDs so they write into the same log
+#  - Subsequent init_logging calls no-op if a log is already active
+
+function init_logging() {
+  local caller="${1:-$0}"
+
+  # If logging already initialized in this process tree, do nothing
+  if [[ -n "${IR_LOG_INITIALIZED:-}" ]]; then
+    return 0
+  fi
+
+  # Determine the "root" script name once (first caller wins)
+  if [[ -z "${IR_ROOT_SCRIPT:-}" ]]; then
+    IR_ROOT_SCRIPT="$(basename "$caller")"
+    IR_ROOT_SCRIPT="${IR_ROOT_SCRIPT%.sh}"    # strip .sh
+    export IR_ROOT_SCRIPT
+  fi
+
+  # Timestamp only once per run
+  if [[ -z "${IR_LOG_TS:-}" ]]; then
+    IR_LOG_TS="$(date '+%Y-%m-%d_%H-%M-%S')"
+    export IR_LOG_TS
+  fi
+
+  # Compute logs directory (prefer project root = parent of the script dir)
+  local script_dir project_root
+  script_dir="$(cd "$(dirname "$caller")" && pwd -P)"
+  project_root="$(cd "$script_dir/.." 2>/dev/null && pwd -P)"
+  if [[ -n "$project_root" && -d "$project_root" ]]; then
+    IR_LOG_DIR="$project_root/logs"
+  else
+    IR_LOG_DIR="$script_dir/logs"
+  fi
+  mkdir -p "$IR_LOG_DIR"
+
+  # Final logfile path
+  IR_LOG_FILE="$IR_LOG_DIR/${IR_ROOT_SCRIPT}_${IR_LOG_TS}.log"
+  export IR_LOG_DIR IR_LOG_FILE
+
+  # Header (before redirect) in case anything prints very early
+  {
+    printf '==== %s | %s starting (pid %s) ====\n' "$(date -Iseconds)" "$IR_ROOT_SCRIPT" "$$"
+  } >>"$IR_LOG_FILE"
+
+  # Redirect current shell's stdout/stderr to tee (append) -> file + console
+  # Child processes inherit these FDs, so they write to the same log.
+  exec > >(tee -a "$IR_LOG_FILE") 2>&1
+
+  IR_LOG_INITIALIZED=1
+  export IR_LOG_INITIALIZED
+}
+
+# Convenience: timestamped line logger (still goes through the same redirection)
+log() {
+  printf '%s %s\n' "$(date -Iseconds)" "$*"
+}
+
+# —————————————————————————————————————————————————————————————
 # Helper functions
 # —————————————————————————————————————————————————————————————
 

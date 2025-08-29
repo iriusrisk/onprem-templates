@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -e
 
-init_logging "$0"
-
 REPO_URL="https://github.com/iriusrisk/onprem-templates.git"
 BRANCH="${BRANCH:-main}"
 REPO_DIR="onprem-templates"

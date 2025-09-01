@@ -377,7 +377,7 @@ EOF
         && sudo -u $PG_SUPERUSER psql -d postgres -c "DROP ROLE \"$PG_USER\";" 2>/dev/null \
         || echo "Role $PG_USER does not exist, skipping drop."
 
-        if [[ $CONTAINER_ENGINE == "docker" ]]; then
+        if command -v apt-get &>/dev/null; then
             sudo apt-get update
             sudo apt-get install dirmngr ca-certificates software-properties-common apt-transport-https lsb-release curl -y
             # Add PGDG repo
@@ -393,7 +393,7 @@ EOF
             fi
             sudo systemctl enable postgresql
             sudo systemctl start postgresql
-        elif [[ $CONTAINER_ENGINE == "podman" ]]; then
+        elif command -v dnf &>/dev/null; then
             sudo dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-9-x86_64/pgdg-redhat-repo-latest.noarch.rpm
             sudo dnf -qy module disable postgresql
             sudo dnf install -y postgresql15-server

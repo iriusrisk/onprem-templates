@@ -1,0 +1,11 @@
+# Ignore preflight output log from scripts
+scripts/preflight_output.txt
+
+# Ignore generated certificates
+*.pem
+
+# Ignore postgres db
+postgres
+
+# Ignore logs
+logs/

@@ -47,7 +47,9 @@ if [[ -n "$DB_PASS" ]]; then
     echo "Using Postgres password from environment."
 else
     DB_PASS=$(prompt_nonempty "Enter the Postgres password")
-    encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
+    if [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+        encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
+    fi
 fi
 
 # Properly escape JDBC URL for YAML

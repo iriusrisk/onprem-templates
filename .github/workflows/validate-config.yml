@@ -33,32 +33,6 @@ jobs:
           chmod +x $HOME/.local/bin/docker-compose
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Create CI stubs for generated services
-        run: |
-          mkdir -p container-compose
-          cat > container-compose/container-compose.ci.tomcat.yml <<'EOF'
-          version: '3.7'
-          services:
-            tomcat:
-              image: alpine:3.19
-          EOF
-          cat > container-compose/container-compose.ci.nginx.yml <<'EOF'
-          version: '3.7'
-          services:
-            nginx:
-              image: alpine:3.19
-          EOF
-
-      - name: CI env for compose
-        run: |
-          cat > .env <<'EOF'
-          HOST_NAME=ci.local
-          POSTGRES_IP=127.0.0.1
-          POSTGRES_PASSWORD=unused
-          KEYSTORE_PASSWORD=unused
-          KEY_ALIAS_PASSWORD=unused
-          EOF
-
       - name: Validate docker-compose syntax
         run: docker-compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml -f docker/docker-compose.saml.yml config
 

@@ -198,7 +198,7 @@ if [[ -n "$OVERRIDE_FILE" && -f "$OVERRIDE_FILE" ]]; then
         echo "$msg"
         WARNINGS+=("$msg")
         POSTGRES_VALUES_FILLED=0
-    elif [[ "$IRIUS_DB_URL" == *'${POSTGRES_IP}'* || "$IRIUS_DB_URL" == *'${POSTGRES_PASSWORD}'* ]]; then
+    elif [[ "$CONTAINER_ENGINE" == "docker" && ( "$IRIUS_DB_URL" == *'${POSTGRES_IP}'* || "$IRIUS_DB_URL" == *'${POSTGRES_PASSWORD}'* ) ]]; then
         msg="WARNING: IRIUS_DB_URL must be filled in with real Postgres IP and password, not left as template variables in $OVERRIDE_FILE"
         echo "$msg"
         WARNINGS+=("$msg")

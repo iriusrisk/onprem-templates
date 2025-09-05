@@ -26,42 +26,18 @@ function prompt_engine() {
         return 0
     fi
 
-    # Amazon Linux → force Docker, no prompt
     if is_amazon_linux; then
         CONTAINER_ENGINE="docker"
         export CONTAINER_ENGINE
         echo "✅ Detected Amazon Linux. Using Docker as container engine."
-    # RHEL → force Podman, no prompt
     elif is_rhel_like; then
         CONTAINER_ENGINE="podman"
         export CONTAINER_ENGINE
         echo "✅ Detected RHEL. Using Podman as container engine."
     else
-        local default_engine="docker"
-
-        # Ask user
-        echo "Which container engine would you like to use?"
-        echo "  docker"
-        echo "  podman"
-        echo
-        read -rp "Enter engine [default: $default_engine]: " choice
-        choice="${choice,,}"   # lowercase
-
-        # Use default if empty
-        if [[ -z "$choice" ]]; then
-            choice="$default_engine"
-        fi
-
-        # Validate
-        if [[ ! "$choice" =~ ^(docker|podman)$ ]]; then
-            echo "❌ Invalid choice: $choice"
-            echo "Please enter 'docker' or 'podman'."
-            exit 1
-        fi
-
-        CONTAINER_ENGINE="$choice"
+        CONTAINER_ENGINE="docker"
         export CONTAINER_ENGINE
-        echo "✅ Using container engine: $CONTAINER_ENGINE"
+        echo "✅ Detected Ubuntu/Debian. Using Docker as container engine."
     fi
 }
 
@@ -157,10 +133,6 @@ function install_docker() {
         sudo apt-get install -y docker.io docker-compose
         sudo systemctl start docker
         sudo systemctl enable docker
-    elif command -v dnf &>/dev/null; then
-        sudo dnf install -y docker docker-compose
-        sudo systemctl start docker
-        sudo systemctl enable docker
     else
         echo "Please install Docker and Docker Compose manually." >&2
         exit 1
@@ -169,41 +141,11 @@ function install_docker() {
 
 function install_podman() {
     echo "Installing Podman and podman-compose..."
-    if command -v apt-get &>/dev/null; then
-        sudo apt-get update -y
-        sudo apt-get install -y podman python3-pip
+    sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true
+    sudo dnf install -y container-tools podman-compose python3-dotenv || {
+        sudo dnf install -y podman python3-pip
         python3 -m pip install --upgrade --user podman-compose python-dotenv
-    elif command -v dnf &>/dev/null; then
-        if is_amazon_linux; then
-            # Amazon Linux 2023: enable the repository that contains podman
-            sudo dnf install -y amazon-linux-extras
-            sudo dnf enable -y extras
-            sudo dnf update -y
-
-            # Now install podman
-            sudo dnf install -y podman python3-pip || {
-                echo "Podman package not found even after enabling extras." >&2
-                exit 1
-            }
-
-            # Try to install podman-compose (via RPM or pip fallback)
-            if ! sudo dnf -y install podman-compose 2>/dev/null; then
-                python3 -m pip install --upgrade --user podman-compose python-dotenv
-            else
-                sudo dnf install -y python3-dotenv || python3 -m pip install --upgrade --user python-dotenv
-            fi
-        else
-            # RHEL/Rocky/Alma/Fedora
-            sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true
-            sudo dnf install -y container-tools podman-compose python3-dotenv || {
-                sudo dnf install -y podman python3-pip
-                python3 -m pip install --upgrade --user podman-compose python-dotenv
-            }
-        fi
-    else
-        echo "Please install Podman manually." >&2
-        exit 1
-    fi
+    }
 }
 
 function install_git() {
@@ -375,7 +317,7 @@ EOF
                 break
             fi
         else
-            # Podman (or other engines) can be used directly
+            # Podman can be used directly
             if $CONTAINER_ENGINE exec iriusrisk-postgres pg_isready -U "$PG_SUPERUSER" >/dev/null 2>&1; then
                 break
             fi

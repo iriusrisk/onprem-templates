@@ -44,7 +44,7 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 
 ### `one-click.sh`
 - The main **end-to-end installer**.
-- Ensures you’re in the right directory, picks a container engine (Docker or Podman), sets up PostgreSQL (internal container, external DB, or local install), and then deploys IriusRisk.
+- Ensures you’re in the right directory, detects the Linux distribution, selects the appropriate container engine automatically, sets up PostgreSQL (internal container, external DB, or local install), and then deploys IriusRisk.
 - Calls other helper scripts (`preflight.sh`, `setup-wizard.sh`) as needed.
 - Recommended if you’ve already cloned the repo and are inside the `scripts/` directory.
 
@@ -83,8 +83,7 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
    - Launch `one-click.sh`
 
 3. **Answer interactive prompts**:
-   - Choose container engine (`docker` or `podman`)
-   - Decide how to set up PostgreSQL (internal container, external DB, or install locally)
+   - Decide how to set up PostgreSQL (internal container or external DB)
    - Provide hostname
    - Confirm deployment
 
@@ -92,11 +91,11 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
    - Dependencies are installed
    - PostgreSQL is set up
    - Configuration is applied
-   - Containers are deployed
+   - Containers are deployed (via the detected container engine)
    - Systemd services are created (so containers restart automatically on reboot)
 
 5. **Post-deployment (Docker only)**:  
-   If Docker was chosen as the container engine, the installer will add your user to the `docker` group.  
+   If your distribution uses Docker as the container engine, the installer will add your user to the `docker` group.  
    ⚠️ You must **log out and log back in** (or start a new shell session) before running Docker commands manually.  
    Until you do, manual Docker commands will fail with `permission denied` errors.
 
@@ -122,10 +121,22 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 
 ---
 
+## 📘 Container Engine Mapping
+
+The container engine is selected automatically based on the detected Linux distribution:
+
+| Distribution                  | Container Engine |
+|-------------------------------|------------------|
+| RHEL / Fedora / similar       | Podman           |
+| Amazon Linux                  | Docker           |
+| Ubuntu / Debian / similar     | Docker           |
+
+---
+
 ## 📘 Additional Notes
 
 - **Certificates**: Self-signed certs are generated automatically if not provided.  
-  Place your `cert.pem`, `key.pem`, and `ec_private.pem` in `docker/` or `podman/` depending on your chosen engine, if using custom ones. For production environments, it is **highly recommended** to provide your own securely signed certificates.
+  Place your `cert.pem`, `key.pem`, and `ec_private.pem` in `docker/` or `podman/` depending on the detected engine, if using custom ones. For production environments, it is **highly recommended** to provide your own securely signed certificates.
 - **Systemd integration**: Docker and Podman services are wrapped as systemd units so the stack comes up automatically after a reboot.
 - **Rootless Podman**: The automation configures rootless Podman correctly (including `/run/user/<uid>` handling, tmpfiles rules, and environment exports).
 - **Logs**: All scripts log their output under `logs/` with filenames like  

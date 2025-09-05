@@ -12,18 +12,19 @@ services:
       - "443:443"
     image: localhost/nginx-rhel
     container_name: iriusrisk-nginx
+    depends_on:
+      - tomcat
     networks:
       - iriusrisk-frontend
     mem_reservation: 50M
     mem_limit: 200M
-    restart: unless-stopped
     volumes:
       - "./cert.pem:/etc/nginx/ssl/star_iriusrisk_com.crt:z"
       - "./key.pem:/etc/nginx/ssl/star_iriusrisk_com.key:z"
 
   tomcat:
     environment:
-      - IRIUS_EDITION=saas
+      - IRIUS_EDITION=onprem
       - grails_env=production
       - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
       - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
@@ -48,17 +49,16 @@ services:
   startleft:
     environment:
       - IRIUS_SERVER=http://tomcat:8080
-    image: continuumsecurity/iriusrisk-prod:startleft
+    image: docker.io/continuumsecurity/iriusrisk-prod:startleft
     container_name: iriusrisk-startleft
     command: ["uvicorn", "startleft.startleft.api.fastapi_server:webapp", "--host", "0.0.0.0", "--port", "8081"]
     networks:
       - iriusrisk-backend
     mem_reservation: 1G
     mem_limit: 2G
-    restart: unless-stopped
 
   reporting-module:
-    image: continuumsecurity/iriusrisk-prod:reporting-module
+    image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
     container_name: reporting-module
     networks:
       - iriusrisk-backend

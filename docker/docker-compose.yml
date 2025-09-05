@@ -10,7 +10,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    image: continuumsecurity/iriusrisk-prod:nginx
+    image: docker.io/continuumsecurity/iriusrisk-prod:nginx
     container_name: iriusrisk-nginx
     networks:
       - iriusrisk-frontend
@@ -36,7 +36,7 @@ services:
             -XX:MaxMetaspaceSize=2G
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
-    image: continuumsecurity/iriusrisk-prod:tomcat-4
+    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
     container_name: iriusrisk-tomcat
     networks:
       - iriusrisk-frontend
@@ -49,7 +49,7 @@ services:
   startleft:
     environment:
       - IRIUS_SERVER=http://tomcat:80
-    image: continuumsecurity/iriusrisk-prod:startleft
+    image: docker.io/continuumsecurity/iriusrisk-prod:startleft
     container_name: iriusrisk-startleft
     command: ["uvicorn", "startleft.startleft.api.fastapi_server:webapp", "--host", "0.0.0.0", "--port", "8081"]
     networks:
@@ -60,7 +60,7 @@ services:
     cpu_shares: 128
 
   reporting-module:
-    image: continuumsecurity/iriusrisk-prod:reporting-module
+    image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
     container_name: reporting-module
     networks:
       - iriusrisk-backend

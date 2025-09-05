@@ -8,10 +8,5 @@ services:
 
   tomcat:
     environment:
-      - IRIUS_DB_URL=jdbc\:postgresql\://${POSTGRES_IP}\:5432/iriusprod?user\=iriusprod&password\=${POSTGRES_PASSWORD}
+      - IRIUS_DB_URL=jdbc\:postgresql\://postgres\:5432/iriusprod?user\=iriusprod&password\=${POSTGRES_PASSWORD}
       - IRIUS_EXT_URL=https\://${HOST_NAME}
-   
-    # uncomment the lines below to add custom scripts, or any other volume
-    # place the "*.sh" files in scripts directory and they will be executed before IriusRisk start
-    # volumes:
-    #   - "./scripts/:/etc/irius/scripts.d/"

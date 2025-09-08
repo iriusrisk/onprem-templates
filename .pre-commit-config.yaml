@@ -1,0 +1,9 @@
+repos:
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2  # pick the latest stable release
+    hooks:
+      - id: shfmt
+        args: ["-i", "2", "-ci", "-s"]  
+        # -i 2 = indent with 2 spaces
+        # -ci  = indent switch cases
+        # -s   = simplify code where possible

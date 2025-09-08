@@ -3,7 +3,7 @@ source functions.sh
 set -e
 
 # Fallback for environments where $USER isn't set
-if [[ -z "${USER:-}" ]]; then
+if [[ -z ${USER:-} ]]; then
 	USER="$(id -un)"
 	export USER
 fi
@@ -34,7 +34,7 @@ prompt_engine
 # 2. SAML question early if needed (validate Y/N)
 # —————————————————————————————————————————————————————————————
 ENABLE_SAML_ONCLICK=$(prompt_yn "Enable SAML integration for this deployment?")
-if [[ "$ENABLE_SAML_ONCLICK" == "n" ]]; then
+if [[ $ENABLE_SAML_ONCLICK == "n" ]]; then
 	PRE_WARNS=$(
 		printf '%s\n' "$PRE_WARNS" |
 			grep -Ev "KEYSTORE_PASSWORD must be set|KEY_ALIAS_PASSWORD must be set" ||
@@ -65,7 +65,7 @@ if echo "$PRE_ERRS" | grep -q "jq is not installed"; then
 	install_jq
 fi
 
-if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+if [[ $CONTAINER_ENGINE == "docker" ]]; then
 	# Ensure Docker is installed
 	if ! command -v docker &>/dev/null || ! command -v docker-compose &>/dev/null; then
 		install_docker
@@ -89,7 +89,7 @@ if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
 			echo "or deployment steps will attempt to use the group automatically via 'sg docker'."
 		fi
 	fi
-elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 	# Install podman if missing
 	if ! command -v podman &>/dev/null; then
 		install_podman
@@ -108,13 +108,13 @@ else
 	exit 1
 fi
 
-prompt_postgres_option
+prompt_postgres_option setup
 
-if [[ "$POSTGRES_SETUP_OPTION" == "1" ]]; then
+if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
 	install_and_configure_postgres
 	export USE_INTERNAL_PG="y"
 	export DB_PASS
-elif [[ "$POSTGRES_SETUP_OPTION" == "2" ]]; then
+elif [[ $POSTGRES_SETUP_OPTION == "2" ]]; then
 	export USE_INTERNAL_PG="n"
 fi
 
@@ -124,7 +124,7 @@ fi
 echo
 echo "Launching the setup wizard..."
 set +e
-if [[ "$POSTGRES_SETUP_OPTION" == "3" ]]; then
+if [[ $POSTGRES_SETUP_OPTION == "3" ]]; then
 	# We want to prefill the external DB choice and details
 	CONTAINER_ENGINE="$CONTAINER_ENGINE" \
 		SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
@@ -161,7 +161,7 @@ fi
 # 7. Confirm deploy (validate Y/N)
 # —————————————————————————————————————————————————————————————
 DEPLOY_OK=$(prompt_yn "All checks complete. Proceed with deployment?")
-if [[ "$DEPLOY_OK" == "n" ]]; then
+if [[ $DEPLOY_OK == "n" ]]; then
 	echo "Aborted by user."
 	exit 0
 fi
@@ -175,36 +175,36 @@ container_registry_login
 CONTAINER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../$CONTAINER_ENGINE && pwd)"
 
 case "$CONTAINER_ENGINE" in
-docker)
-	echo
-	echo "Deploying with Docker Compose..."
+	docker)
+		echo
+		echo "Deploying with Docker Compose..."
 
-	DOCKER_COMPOSE_PATH="$(which docker-compose 2>/dev/null)"
-	cd "$CONTAINER_DIR"
+		DOCKER_COMPOSE_PATH="$(which docker-compose 2>/dev/null)"
+		cd "$CONTAINER_DIR"
 
-	if [[ -z "$DOCKER_USER" ]]; then
-		DOCKER_USER="$USER"
-	fi
+		if [[ -z $DOCKER_USER ]]; then
+			DOCKER_USER="$USER"
+		fi
 
-	# Build commands
-	COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
-	CLEAN_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE down --remove-orphans\""
-	PS_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE ps -q\""
-	PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
+		# Build commands
+		COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
+		CLEAN_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE down --remove-orphans\""
+		PS_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE ps -q\""
+		PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
 
-	if [[ -n "$PS_OUTPUT" ]]; then
-		echo "Cleaning up existing containers for this project..."
-		sg docker -c "cd $(pwd) && $CLEAN_CMD"
-		# Force-remove any leftover containers by their container_name
-		for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
-			sg docker -c "docker rm -f $svc 2>/dev/null || true"
-		done
-	fi
+		if [[ -n $PS_OUTPUT ]]; then
+			echo "Cleaning up existing containers for this project..."
+			sg docker -c "cd $(pwd) && $CLEAN_CMD"
+			# Force-remove any leftover containers by their container_name
+			for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
+				sg docker -c "docker rm -f $svc 2>/dev/null || true"
+			done
+		fi
 
-	# Dynamically write systemd unit file
-	SERVICE_NAME="iriusrisk-docker.service"
+		# Dynamically write systemd unit file
+		SERVICE_NAME="iriusrisk-docker.service"
 
-	cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME
+		cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME
 [Unit]
 Description=IriusRisk Docker Compose Stack
 After=network.target docker.service
@@ -224,72 +224,72 @@ ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
 WantedBy=multi-user.target
 EOF
 
-	# Ensure docker login works for service
-	sudo mkdir -p /etc/docker
-	sudo cp ~/.docker/config.json /etc/docker/config.json
-	sudo chmod 600 /etc/docker/config.json
-	sudo chown root:root /etc/docker/config.json
+		# Ensure docker login works for service
+		sudo mkdir -p /etc/docker
+		sudo cp ~/.docker/config.json /etc/docker/config.json
+		sudo chmod 600 /etc/docker/config.json
+		sudo chown root:root /etc/docker/config.json
 
-	# Start service
-	sudo systemctl daemon-reload
-	sudo systemctl enable $SERVICE_NAME
-	sudo systemctl restart $SERVICE_NAME
-	;;
-podman)
-	echo
-	echo "Deploying with Podman Compose (rootless)..."
-	cd "$CONTAINER_DIR"
+		# Start service
+		sudo systemctl daemon-reload
+		sudo systemctl enable $SERVICE_NAME
+		sudo systemctl restart $SERVICE_NAME
+		;;
+	podman)
+		echo
+		echo "Deploying with Podman Compose (rootless)..."
+		cd "$CONTAINER_DIR"
 
-	# Build override flags once
-	COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
+		# Build override flags once
+		COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
 
-	# Decide compose up/ps commands (rootless, without sudo)
-	UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
-	PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
-	DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
+		# Decide compose up/ps commands (rootless, without sudo)
+		UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
+		PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
+		DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
 
-	# --- Clean up any existing stack for this project (rootless) ---
-	if [ "$($PS_CMD 2>/dev/null)" ]; then
-		echo "Cleaning up existing containers for this project..."
-		# Stop compose and make sure nothing lingers
-		$DOWN_CMD || true
-		stop_disable_user_units_for_project "$CONTAINER_ENGINE"
-		teardown_rootless_project "$CONTAINER_ENGINE"
-	fi
+		# --- Clean up any existing stack for this project (rootless) ---
+		if [ "$($PS_CMD 2>/dev/null)" ]; then
+			echo "Cleaning up existing containers for this project..."
+			# Stop compose and make sure nothing lingers
+			$DOWN_CMD || true
+			stop_disable_user_units_for_project "$CONTAINER_ENGINE"
+			teardown_rootless_project "$CONTAINER_ENGINE"
+		fi
 
-	# --- Image tweaks that used to run with sudo ---
-	# You can still run root inside the container in rootless mode, so commits are fine.
-	# (No host setcap calls here; we only modify the container image itself if needed.)
-	echo "Preparing custom images (rootless)..."
-	podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
+		# --- Image tweaks that used to run with sudo ---
+		# You can still run root inside the container in rootless mode, so commits are fine.
+		# (No host setcap calls here; we only modify the container image itself if needed.)
+		echo "Preparing custom images (rootless)..."
+		podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
 
-	# NGINX image: ensure it can bind <1024 inside the container.
-	# NOTE: Binding privileged ports on the HOST in rootless requires either:
-	#   - sysctl net.ipv4.ip_unprivileged_port_start=80  (your PoC), or
-	#   - using 8080/8443 on the host and fronting with a host-level redirect/proxy.
-	podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
-		-c "set -eu; \
+		# NGINX image: ensure it can bind <1024 inside the container.
+		# NOTE: Binding privileged ports on the HOST in rootless requires either:
+		#   - sysctl net.ipv4.ip_unprivileged_port_start=80  (your PoC), or
+		#   - using 8080/8443 on the host and fronting with a host-level redirect/proxy.
+		podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
+			-c "set -eu; \
                 if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
                     (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
                 command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true; \
                 sleep 1"
 
-	podman commit \
-		--change='USER nginx' \
-		--change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
-		temp-nginx \
-		localhost/nginx-rhel
+		podman commit \
+			--change='USER nginx' \
+			--change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
+			temp-nginx \
+			localhost/nginx-rhel
 
-	podman rm -f temp-nginx || true
-	echo "Custom Nginx image created as localhost/nginx-rhel"
+		podman rm -f temp-nginx || true
+		echo "Custom Nginx image created as localhost/nginx-rhel"
 
-	# TOMCAT wrapper to append decrypted secrets
-	podman run \
-		--name temp-tomcat \
-		--user root \
-		--entrypoint /bin/sh \
-		docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
-		-c '\
+		# TOMCAT wrapper to append decrypted secrets
+		podman run \
+			--name temp-tomcat \
+			--user root \
+			--entrypoint /bin/sh \
+			docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
+			-c '\
             set -eu; \
             if [ -f /etc/alpine-release ]; then \
                 apk add --no-cache gnupg; \
@@ -337,101 +337,101 @@ EOF
             chmod +x /usr/local/bin/expand-secrets.sh; \
   '
 
-	podman commit \
-		--change='USER tomcat' \
-		--change='ENTRYPOINT ["/usr/local/bin/expand-secrets.sh"]' \
-		temp-tomcat \
-		localhost/tomcat-rhel
+		podman commit \
+			--change='USER tomcat' \
+			--change='ENTRYPOINT ["/usr/local/bin/expand-secrets.sh"]' \
+			temp-tomcat \
+			localhost/tomcat-rhel
 
-	podman rm -f temp-tomcat || true
-	echo "Custom Tomcat created as localhost/tomcat-rhel"
+		podman rm -f temp-tomcat || true
+		echo "Custom Tomcat created as localhost/tomcat-rhel"
 
-	# --- Bring up containers (rootless) ---
-	eval "$UP_CMD"
+		# --- Bring up containers (rootless) ---
+		eval "$UP_CMD"
 
-	# Discover compose project label
-	PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
-	if [[ -z "$PROJECT_LABEL" ]]; then
-		PROJECT_LABEL="$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')"
-	fi
+		# Discover compose project label
+		PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
+		if [[ -z $PROJECT_LABEL ]]; then
+			PROJECT_LABEL="$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')"
+		fi
 
-	# Collect ALL containers in the project (running or not)
-	mapfile -t containers < <(
-		podman ps -a \
-			--filter "label=io.podman.compose.project=${PROJECT_LABEL}" \
-			--format "{{.Names}}"
-	)
+		# Collect ALL containers in the project (running or not)
+		mapfile -t containers < <(
+			podman ps -a \
+				--filter "label=io.podman.compose.project=${PROJECT_LABEL}" \
+				--format "{{.Names}}"
+		)
 
-	# Bail out only if literally no containers exist for the project
-	if [[ ${#containers[@]} -eq 0 ]]; then
-		echo "No containers found for project '${PROJECT_LABEL}'."
-		echo "Tip: check 'podman-compose $COMPOSE_OVERRIDE ps -a' output."
-		exit 0
-	fi
+		# Bail out only if literally no containers exist for the project
+		if [[ ${#containers[@]} -eq 0 ]]; then
+			echo "No containers found for project '${PROJECT_LABEL}'."
+			echo "Tip: check 'podman-compose $COMPOSE_OVERRIDE ps -a' output."
+			exit 0
+		fi
 
-	echo "Generating user systemd unit files..."
-	UNIT_DIR="$HOME/.config/systemd/user"
-	mkdir -p "$UNIT_DIR"
-	generated_any=0
-	for cname in "${containers[@]}"; do
-		podman generate systemd --files --name "$cname" \
-			2> >(grep -v "DEPRECATED command" >&2)
-		[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ && generated_any=1
-	done
-	[[ "$generated_any" -eq 0 ]] && echo "No unit files generated; check project label: ${PROJECT_LABEL}"
+		echo "Generating user systemd unit files..."
+		UNIT_DIR="$HOME/.config/systemd/user"
+		mkdir -p "$UNIT_DIR"
+		generated_any=0
+		for cname in "${containers[@]}"; do
+			podman generate systemd --files --name "$cname" \
+				2> >(grep -v "DEPRECATED command" >&2)
+			[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ && generated_any=1
+		done
+		[[ $generated_any -eq 0 ]] && echo "No unit files generated; check project label: ${PROJECT_LABEL}"
 
-	# Harden generated user units for rootless Podman/runtime dir
-	for cname in "${containers[@]}"; do
-		svc="$UNIT_DIR/container-$cname.service"
-		[[ -f "$svc" ]] || continue
-		grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" ||
-			sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
-		grep -q '^Environment=TMPDIR=%t' "$svc" ||
-			sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
-		grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" ||
-			sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
-	done
+		# Harden generated user units for rootless Podman/runtime dir
+		for cname in "${containers[@]}"; do
+			svc="$UNIT_DIR/container-$cname.service"
+			[[ -f $svc ]] || continue
+			grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" ||
+				sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
+			grep -q '^Environment=TMPDIR=%t' "$svc" ||
+				sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
+			grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" ||
+				sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
+		done
 
-	# Ensure nginx waits for tomcat (order + requirement across reboots)
-	svc="$UNIT_DIR/container-iriusrisk-nginx.service"
-	if [[ -f "$svc" ]]; then
-		grep -q '^After=container-iriusrisk-tomcat.service' "$svc" ||
-			sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
-		grep -q '^Requires=container-iriusrisk-tomcat.service' "$svc" ||
-			sed -i '/^\[Unit\]/a Requires=container-iriusrisk-tomcat.service' "$svc"
-	fi
+		# Ensure nginx waits for tomcat (order + requirement across reboots)
+		svc="$UNIT_DIR/container-iriusrisk-nginx.service"
+		if [[ -f $svc ]]; then
+			grep -q '^After=container-iriusrisk-tomcat.service' "$svc" ||
+				sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
+			grep -q '^Requires=container-iriusrisk-tomcat.service' "$svc" ||
+				sed -i '/^\[Unit\]/a Requires=container-iriusrisk-tomcat.service' "$svc"
+		fi
 
-	# Ensure Podman uses per-boot runtime dir in interactive shells
-	if ! grep -q 'XDG_RUNTIME_DIR=.*run/user' ~/.bash_profile 2>/dev/null; then
-		cat <<'EOF' >>~/.bash_profile
+		# Ensure Podman uses per-boot runtime dir in interactive shells
+		if ! grep -q 'XDG_RUNTIME_DIR=.*run/user' ~/.bash_profile 2>/dev/null; then
+			cat <<'EOF' >>~/.bash_profile
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 export TMPDIR="${TMPDIR:-$XDG_RUNTIME_DIR}"
 EOF
-	fi
+		fi
 
-	# Make sure we can talk to user systemd in this run (no start now; just enable)
-	if ! ensure_user_systemd_ready "$(id -un)"; then
-		echo "WARNING: user systemd not reachable; units placed in $UNIT_DIR."
-		echo "They will start on next login/reboot (linger enabled). To enable manually later:"
-		echo "  ensure_user_systemd_ready \"$(id -un)\" && systemctl --user enable container-*.service"
-	else
-		systemctl --user daemon-reload
+		# Make sure we can talk to user systemd in this run (no start now; just enable)
+		if ! ensure_user_systemd_ready "$(id -un)"; then
+			echo "WARNING: user systemd not reachable; units placed in $UNIT_DIR."
+			echo "They will start on next login/reboot (linger enabled). To enable manually later:"
+			echo "  ensure_user_systemd_ready \"$(id -un)\" && systemctl --user enable container-*.service"
+		else
+			systemctl --user daemon-reload
 
-		for cname in "${containers[@]}"; do
-			svc="container-$cname.service"
-			if [[ -f "$UNIT_DIR/$svc" ]]; then
-				systemctl --user enable "$svc" || echo "WARNING: failed to enable $svc"
-			else
-				echo "WARNING: unit file missing: $UNIT_DIR/$svc"
-			fi
-		done
-	fi
-	echo "Podman rootless systemd user services created and enabled."
-	;;
-*)
-	echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
-	exit 1
-	;;
+			for cname in "${containers[@]}"; do
+				svc="container-$cname.service"
+				if [[ -f "$UNIT_DIR/$svc" ]]; then
+					systemctl --user enable "$svc" || echo "WARNING: failed to enable $svc"
+				else
+					echo "WARNING: unit file missing: $UNIT_DIR/$svc"
+				fi
+			done
+		fi
+		echo "Podman rootless systemd user services created and enabled."
+		;;
+	*)
+		echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
+		exit 1
+		;;
 esac
 
 echo

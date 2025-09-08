@@ -9,24 +9,24 @@ function prompt_yn() {
 		read -rp "$1 (y/n): " yn
 		yn=${yn,,}
 		case "$yn" in
-		y | yes)
-			echo "y"
-			return 0
-			;;
-		n | no)
-			echo "n"
-			return 0
-			;;
-		*)
-			echo "Invalid input: '$yn'. Please enter 'y' or 'n'." >&2
-			;;
+			y | yes)
+				echo "y"
+				return 0
+				;;
+			n | no)
+				echo "n"
+				return 0
+				;;
+			*)
+				echo "Invalid input: '$yn'. Please enter 'y' or 'n'." >&2
+				;;
 		esac
 	done
 }
 
 function prompt_engine() {
 	# If already set and valid, skip prompting
-	if [[ "$CONTAINER_ENGINE" =~ ^(docker|podman)$ ]]; then
+	if [[ $CONTAINER_ENGINE =~ ^(docker|podman)$ ]]; then
 		echo "✅ Using container engine from environment: $CONTAINER_ENGINE"
 		export CONTAINER_ENGINE
 		return 0
@@ -48,16 +48,24 @@ function prompt_engine() {
 }
 
 function prompt_postgres_option() {
-	echo "How do you want to configure PostgreSQL?"
+	local mode="$1"
+	if [[ $mode == "upgrade" ]]; then
+		echo "How is your PostgreSQL configured?"
+	else
+		echo "How do you want to configure PostgreSQL?"
+	fi
+
 	echo "  1) Internal container Postgres"
 	echo "  2) Existing Postgres (provide connection details)"
+
 	while true; do
 		read -rp "Enter 1 or 2: " pg_option
 		case "$pg_option" in
-		1 | 2) break ;;
-		*) echo "Invalid input: '$pg_option'. Please enter 1 or 2." ;;
+			1 | 2) break ;;
+			*) echo "Invalid input: '$pg_option'. Please enter 1 or 2." ;;
 		esac
 	done
+
 	POSTGRES_SETUP_OPTION="$pg_option"
 }
 
@@ -69,7 +77,7 @@ function prompt_registry_password() {
 function prompt_for_docker_user() {
 	local uname
 	read -rp "Enter the username to add to the docker group (default: $USER): " uname
-	if [[ -z "$uname" ]]; then
+	if [[ -z $uname ]]; then
 		uname="$USER"
 	fi
 	echo "$uname"
@@ -79,7 +87,7 @@ function prompt_nonempty() {
 	local value
 	while true; do
 		read -rp "$1: " value
-		if [[ -n "$value" ]]; then
+		if [[ -n $value ]]; then
 			echo "$value"
 			return 0
 		else
@@ -232,7 +240,7 @@ function install_and_configure_postgres() {
 	echo "Starting internal Postgres container..."
 	cd "$container_path"
 
-	if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		# -------- Docker path: keep existing plaintext env-in-compose flow --------
 		local compose_tool="docker-compose"
 		# Write the password into the compose file
@@ -247,7 +255,7 @@ function install_and_configure_postgres() {
 		sudo rm -rf ./postgres/data
 		# Bring up just Postgres
 		sg docker -c "$compose_tool -f $(basename "$postgres_file") up -d postgres"
-	elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		local compose_tool="podman-compose"
 		# Build/refresh a tiny postgres image that decrypts at runtime (no plaintext on disk)
 		local base_image="docker.io/library/postgres:15.4"
@@ -317,7 +325,7 @@ EOF
 	timeout=60
 
 	while true; do
-		if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+		if [[ $CONTAINER_ENGINE == "docker" ]]; then
 			# Use sg docker -c to ensure group permissions are applied
 			if sg docker -c "docker exec iriusrisk-postgres pg_isready -U \"$PG_SUPERUSER\"" >/dev/null 2>&1; then
 				break
@@ -333,7 +341,7 @@ EOF
 		((timeout--))
 		if [ $timeout -le 0 ]; then
 			echo "ERROR: Postgres container did not become ready in time."
-			if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+			if [[ $CONTAINER_ENGINE == "docker" ]]; then
 				sg docker -c "docker logs iriusrisk-postgres"
 			else
 				$CONTAINER_ENGINE logs iriusrisk-postgres
@@ -344,7 +352,7 @@ EOF
 	echo "Postgres is ready!"
 
 	# Create or update the app user/database (idempotent)
-	if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		# Docker path: superuser password is DB_PASS from compose
 		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc \"SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'\" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';\""
 		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc \"SELECT 1 FROM pg_database WHERE datname = '$PG_DB'\" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE DATABASE $PG_DB WITH OWNER $PG_USER;\""
@@ -380,19 +388,19 @@ function init_logging() {
 	local caller="${1:-$0}"
 
 	# If logging already initialized in this process tree, do nothing
-	if [[ -n "${IR_LOG_INITIALIZED:-}" ]]; then
+	if [[ -n ${IR_LOG_INITIALIZED:-} ]]; then
 		return 0
 	fi
 
 	# Determine the "root" script name once (first caller wins)
-	if [[ -z "${IR_ROOT_SCRIPT:-}" ]]; then
+	if [[ -z ${IR_ROOT_SCRIPT:-} ]]; then
 		IR_ROOT_SCRIPT="$(basename "$caller")"
 		IR_ROOT_SCRIPT="${IR_ROOT_SCRIPT%.sh}" # strip .sh
 		export IR_ROOT_SCRIPT
 	fi
 
 	# Timestamp only once per run
-	if [[ -z "${IR_LOG_TS:-}" ]]; then
+	if [[ -z ${IR_LOG_TS:-} ]]; then
 		IR_LOG_TS="$(date '+%Y-%m-%d_%H-%M-%S')"
 		export IR_LOG_TS
 	fi
@@ -401,7 +409,7 @@ function init_logging() {
 	local script_dir project_root
 	script_dir="$(cd "$(dirname "$caller")" && pwd -P)"
 	project_root="$(cd "$script_dir/.." 2>/dev/null && pwd -P)"
-	if [[ -n "$project_root" && -d "$project_root" ]]; then
+	if [[ -n $project_root && -d $project_root ]]; then
 		IR_LOG_DIR="$project_root/logs"
 	else
 		IR_LOG_DIR="$script_dir/logs"
@@ -436,17 +444,17 @@ log() {
 
 function is_rhel_like() {
 	source /etc/os-release
-	[[ "$ID" != "amzn" ]] && (
-		[[ "$ID_LIKE" == *rhel* ]] || [[ "$ID_LIKE" == *fedora* ]] ||
-			[[ "$ID" == "fedora" ]] || [[ "$ID" == "centos" ]] ||
-			[[ "$ID" == "rhel" ]] || [[ "$ID" == "rocky" ]] ||
-			[[ "$ID" == "almalinux" ]]
+	[[ $ID != "amzn" ]] && (
+		[[ $ID_LIKE == *rhel* ]] || [[ $ID_LIKE == *fedora* ]] ||
+			[[ $ID == "fedora" ]] || [[ $ID == "centos" ]] ||
+			[[ $ID == "rhel" ]] || [[ $ID == "rocky" ]] ||
+			[[ $ID == "almalinux" ]]
 	)
 }
 
 function is_amazon_linux() {
 	source /etc/os-release
-	[[ "$ID" == "amzn" ]]
+	[[ $ID == "amzn" ]]
 }
 
 function create_certificates() {
@@ -459,7 +467,7 @@ function create_certificates() {
 	mkdir -p "$CERT_DIR"
 
 	# RSA cert/key pair
-	if [[ -f "$CERT_FILE" && -f "$KEY_FILE" ]]; then
+	if [[ -f $CERT_FILE && -f $KEY_FILE ]]; then
 		echo "✅ RSA certificate and key already exist at $CERT_DIR (skipping)."
 	else
 		echo "🔑 Generating RSA SSL certificate..."
@@ -473,7 +481,7 @@ function create_certificates() {
 	fi
 
 	# EC private key
-	if [[ -f "$EC_KEY_FILE" ]]; then
+	if [[ -f $EC_KEY_FILE ]]; then
 		echo "✅ EC private key already exists at $EC_KEY_FILE (skipping)."
 	else
 		echo "🔑 Generating EC private key..."
@@ -492,9 +500,9 @@ function is_logged_in_as_iriusrisk() {
 	local auth_base64=""
 	local auth_user=""
 
-	if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		config_candidates+=("$HOME/.docker/config.json")
-	elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		# Rootful Podman (rare in our flow)
 		if sudo test -f /run/containers/0/auth.json 2>/dev/null; then
 			config_candidates+=("/run/containers/0/auth.json")
@@ -506,18 +514,18 @@ function is_logged_in_as_iriusrisk() {
 	fi
 
 	for cfg in "${config_candidates[@]}"; do
-		[[ -f "$cfg" ]] || continue
-		if [[ "$cfg" == "/run/containers/0/auth.json" ]]; then
+		[[ -f $cfg ]] || continue
+		if [[ $cfg == "/run/containers/0/auth.json" ]]; then
 			auth_base64=$(sudo jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
 		else
 			auth_base64=$(jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
 		fi
-		[[ -n "$auth_base64" ]] && break
+		[[ -n $auth_base64 ]] && break
 	done
 
-	[[ -z "$auth_base64" ]] && return 1
+	[[ -z $auth_base64 ]] && return 1
 	auth_user=$(echo "$auth_base64" | base64 -d 2>/dev/null | cut -d: -f1)
-	[[ "$auth_user" == "iriusrisk" ]]
+	[[ $auth_user == "iriusrisk" ]]
 }
 
 function container_registry_login() {
@@ -530,9 +538,9 @@ function container_registry_login() {
 
 	prompt_registry_password
 
-	if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
-	elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		if [[ "$(id -u)" -eq 0 ]]; then
 			echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
 		else
@@ -555,7 +563,7 @@ function check_version() {
 	local cmd=$1
 	local required=$2
 	local actual=$($cmd --version | grep -oE "[0-9]+(\.[0-9]+)+" | head -1)
-	if [[ -z "$actual" ]]; then
+	if [[ -z $actual ]]; then
 		msg="ERROR: Could not detect version for $cmd"
 		echo "$msg"
 		ERRORS+=("$msg")
@@ -572,7 +580,7 @@ function check_version() {
 }
 
 function check_file() {
-	if [[ ! -f "$1" ]]; then
+	if [[ ! -f $1 ]]; then
 		msg="ERROR: Required file '$1' not found."
 		echo "$msg"
 		ERRORS+=("$msg")
@@ -588,10 +596,10 @@ function build_compose_override() {
 	local base_files="-f $CONTAINER_ENGINE-compose.yml -f $CONTAINER_ENGINE-compose.override.yml"
 	local files="$base_files"
 
-	if [[ "${enable_saml,,}" == "y" ]]; then
+	if [[ ${enable_saml,,} == "y" ]]; then
 		files="$files -f $CONTAINER_ENGINE-compose.saml.yml"
 	fi
-	if [[ "${use_internal_pg,,}" == "y" ]]; then
+	if [[ ${use_internal_pg,,} == "y" ]]; then
 		files="$files -f $CONTAINER_ENGINE-compose.postgres.yml"
 	fi
 
@@ -792,19 +800,19 @@ EOF
 # Ask for a non-root, existing username
 function prompt_for_nonroot_user() {
 	local def=""
-	[[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && def="$SUDO_USER"
+	[[ -n ${SUDO_USER:-} && ${SUDO_USER} != "root" ]] && def="$SUDO_USER"
 
 	while true; do
 		local prompt="Enter the non-root user to run Podman as"
 		local u=""
-		if [[ -n "$def" ]]; then
+		if [[ -n $def ]]; then
 			read -rp "$prompt [${def}]: " u
 			u="${u:-$def}"
 		else
 			read -rp "$prompt: " u
 		fi
 
-		if [[ -z "$u" ]]; then
+		if [[ -z $u ]]; then
 			echo "Please enter a username." >&2
 			continue
 		fi
@@ -812,7 +820,7 @@ function prompt_for_nonroot_user() {
 			echo "User '$u' does not exist." >&2
 			continue
 		fi
-		if [[ "$u" == "root" || "$(id -u "$u")" -eq 0 ]]; then
+		if [[ $u == "root" || "$(id -u "$u")" -eq 0 ]]; then
 			echo "Root is not allowed for rootless Podman." >&2
 			continue
 		fi
@@ -827,18 +835,18 @@ function resolve_rootless_user() {
 	local u="${USER:-$(id -un)}"
 
 	# If running via sudo, prefer the invoking user
-	if [[ "$u" == "root" && -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+	if [[ $u == "root" && -n ${SUDO_USER:-} && ${SUDO_USER} != "root" ]]; then
 		u="$SUDO_USER"
 	fi
 
 	# Prompt only if still empty or root
-	if [[ -z "$u" || "$u" == "root" ]]; then
+	if [[ -z $u || $u == "root" ]]; then
 		u="$(prompt_for_nonroot_user)"
 	fi
 
 	# Ensure the shell user matches (rootless Podman must run as that user)
 	local current="$(id -un)"
-	if [[ "$u" != "$current" ]]; then
+	if [[ $u != "$current" ]]; then
 		echo "Selected user '$u' does not match current shell user '$current'." >&2
 		echo "Please re-run this script as '$u' (e.g., 'su - $u' or SSH as that user)." >&2
 		exit 1

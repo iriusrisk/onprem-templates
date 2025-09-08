@@ -26,30 +26,30 @@ HOST_NAME=$(prompt_nonempty "Enter the public hostname for your IriusRisk instan
 
 # Internal or external Postgres
 if [[ -n "$USE_INTERNAL_PG" ]]; then
-    echo "Using internal Postgres setting: $USE_INTERNAL_PG"
+	echo "Using internal Postgres setting: $USE_INTERNAL_PG"
 else
-    USE_INTERNAL_PG=$(prompt_yn "Do you want to use an internal Postgres container")
+	USE_INTERNAL_PG=$(prompt_yn "Do you want to use an internal Postgres container")
 fi
 
 if [[ "$USE_INTERNAL_PG" == "y" ]]; then
-    DB_IP="postgres"
+	DB_IP="postgres"
 else
-    # Use DB_IP from env if set (for local install), otherwise prompt
-    if [[ -n "$DB_IP" ]]; then
-        echo "Using Postgres IP address from environment: $DB_IP"
-    else
-        DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
-    fi
+	# Use DB_IP from env if set (for local install), otherwise prompt
+	if [[ -n "$DB_IP" ]]; then
+		echo "Using Postgres IP address from environment: $DB_IP"
+	else
+		DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
+	fi
 fi
 
 # Use DB_PASS from env if set (for local install), otherwise prompt
 if [[ -n "$DB_PASS" ]]; then
-    echo "Using Postgres password from environment."
+	echo "Using Postgres password from environment."
 else
-    DB_PASS=$(prompt_nonempty "Enter the Postgres password")
-    if [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-        encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
-    fi
+	DB_PASS=$(prompt_nonempty "Enter the Postgres password")
+	if [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
+	fi
 fi
 
 # Properly escape JDBC URL for YAML
@@ -63,39 +63,39 @@ IRIUS_EXT_URL="https\\\\://$HOST_NAME"
 # —————————————————————————————————————————————————————————————
 
 if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
-    # Properly escape JDBC URL for YAML
-    JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"
+	# Properly escape JDBC URL for YAML
+	JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"
 elif [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-    JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod"
+	JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod"
 fi
 
 # —————————————————————————————————————————————————————————————
 # 4. SAML setup
 # —————————————————————————————————————————————————————————————
 if [[ -n "$SAML_CHOICE" ]]; then
-    ENABLE_SAML="$SAML_CHOICE"
-    echo "SAML setup: Using value from one-click ('${SAML_CHOICE}')"
+	ENABLE_SAML="$SAML_CHOICE"
+	echo "SAML setup: Using value from one-click ('${SAML_CHOICE}')"
 else
-    ENABLE_SAML=$(prompt_yn "Do you want to enable SAML support")
+	ENABLE_SAML=$(prompt_yn "Do you want to enable SAML support")
 fi
 
 if [[ "$ENABLE_SAML" == "y" ]]; then
-    SAML_KEYSTORE_PASSWORD=$(prompt_nonempty "Enter SAML keystore password (KEYSTORE_PASSWORD)")
-    SAML_KEY_ALIAS_PASSWORD=$(prompt_nonempty "Enter SAML key alias password (KEY_ALIAS_PASSWORD)")
-  if [[ "$CONTAINER_ENGINE" == "podman" ]]; then
-    # Create encrypted secrets + privkeys
-    podman secret rm keystore_pwd keystore_privkey key_alias_pwd key_alias_privkey 2>/dev/null || true
-    encrypt_and_store_secret "$SAML_KEYSTORE_PASSWORD"  "keystore_pwd"   "keystore_privkey"
-    encrypt_and_store_secret "$SAML_KEY_ALIAS_PASSWORD" "key_alias_pwd"  "key_alias_privkey"
-  fi
+	SAML_KEYSTORE_PASSWORD=$(prompt_nonempty "Enter SAML keystore password (KEYSTORE_PASSWORD)")
+	SAML_KEY_ALIAS_PASSWORD=$(prompt_nonempty "Enter SAML key alias password (KEY_ALIAS_PASSWORD)")
+	if [[ "$CONTAINER_ENGINE" == "podman" ]]; then
+		# Create encrypted secrets + privkeys
+		podman secret rm keystore_pwd keystore_privkey key_alias_pwd key_alias_privkey 2>/dev/null || true
+		encrypt_and_store_secret "$SAML_KEYSTORE_PASSWORD" "keystore_pwd" "keystore_privkey"
+		encrypt_and_store_secret "$SAML_KEY_ALIAS_PASSWORD" "key_alias_pwd" "key_alias_privkey"
+	fi
 fi
 # —————————————————————————————————————————————————————————————
 # 5. Safely update override file & generate certificates
 # —————————————————————————————————————————————————————————————
 
 if [[ ! -f "$OVERRIDE_FILE" ]]; then
-    echo "ERROR: $OVERRIDE_FILE not found. Please ensure you have cloned the repo and have the override template."
-    exit 1
+	echo "ERROR: $OVERRIDE_FILE not found. Please ensure you have cloned the repo and have the override template."
+	exit 1
 fi
 
 # Update NG_SERVER_NAME (replace any occurrence)
@@ -115,7 +115,7 @@ awk -v db_url="      - IRIUS_DB_URL=$JDBC_URL" '
         next
     }
     {print}
-' "$OVERRIDE_FILE" > "${OVERRIDE_FILE}.tmp" && mv "${OVERRIDE_FILE}.tmp" "$OVERRIDE_FILE"
+' "$OVERRIDE_FILE" >"${OVERRIDE_FILE}.tmp" && mv "${OVERRIDE_FILE}.tmp" "$OVERRIDE_FILE"
 
 echo "Updated $OVERRIDE_FILE"
 
@@ -125,40 +125,40 @@ create_certificates $HOST_NAME
 # 6. Safely update SAML override if enabled
 # —————————————————————————————————————————————————————————————
 if [[ "$ENABLE_SAML" == "y" ]]; then
-  if [[ ! -f "$SAML_FILE" ]]; then
-      echo "ERROR: $SAML_FILE not found. Please ensure you have the SAML override template."
-      exit 1
-  fi
+	if [[ ! -f "$SAML_FILE" ]]; then
+		echo "ERROR: $SAML_FILE not found. Please ensure you have the SAML override template."
+		exit 1
+	fi
 
-  if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
-    # Replace or insert KEYSTORE_PASSWORD and KEY_ALIAS_PASSWORD under the tomcat environment:
-    if grep -q 'KEYSTORE_PASSWORD=' "$SAML_FILE"; then
-        sed -i "s|KEYSTORE_PASSWORD=.*|KEYSTORE_PASSWORD=$SAML_KEYSTORE_PASSWORD|g" "$SAML_FILE"
-    else
-        # Insert under 'environment:' for tomcat
-        awk -v newvar="      - KEYSTORE_PASSWORD=$SAML_KEYSTORE_PASSWORD" '
+	if [[ "$CONTAINER_ENGINE" == "docker" ]]; then
+		# Replace or insert KEYSTORE_PASSWORD and KEY_ALIAS_PASSWORD under the tomcat environment:
+		if grep -q 'KEYSTORE_PASSWORD=' "$SAML_FILE"; then
+			sed -i "s|KEYSTORE_PASSWORD=.*|KEYSTORE_PASSWORD=$SAML_KEYSTORE_PASSWORD|g" "$SAML_FILE"
+		else
+			# Insert under 'environment:' for tomcat
+			awk -v newvar="      - KEYSTORE_PASSWORD=$SAML_KEYSTORE_PASSWORD" '
             BEGIN {in_env=0; in_tomcat=0}
             /tomcat:/ {print; in_tomcat=1; next}
             in_tomcat && /environment:/ {print; print newvar; in_env=1; in_tomcat=0; next}
             {print}
-        ' "$SAML_FILE" > "${SAML_FILE}.tmp" && mv "${SAML_FILE}.tmp" "$SAML_FILE"
-    fi
-    if grep -q 'KEY_ALIAS_PASSWORD=' "$SAML_FILE"; then
-        sed -i "s|KEY_ALIAS_PASSWORD=.*|KEY_ALIAS_PASSWORD=$SAML_KEY_ALIAS_PASSWORD|g" "$SAML_FILE"
-    else
-        awk -v newvar="      - KEY_ALIAS_PASSWORD=$SAML_KEY_ALIAS_PASSWORD" '
+        ' "$SAML_FILE" >"${SAML_FILE}.tmp" && mv "${SAML_FILE}.tmp" "$SAML_FILE"
+		fi
+		if grep -q 'KEY_ALIAS_PASSWORD=' "$SAML_FILE"; then
+			sed -i "s|KEY_ALIAS_PASSWORD=.*|KEY_ALIAS_PASSWORD=$SAML_KEY_ALIAS_PASSWORD|g" "$SAML_FILE"
+		else
+			awk -v newvar="      - KEY_ALIAS_PASSWORD=$SAML_KEY_ALIAS_PASSWORD" '
             BEGIN {in_env=0; in_tomcat=0}
             /tomcat:/ {print; in_tomcat=1; next}
             in_tomcat && /environment:/ {print; print newvar; in_env=1; in_tomcat=0; next}
             {print}
-        ' "$SAML_FILE" > "${SAML_FILE}.tmp" && mv "${SAML_FILE}.tmp" "$SAML_FILE"
-    fi
-    echo "Updated $SAML_FILE"
-  else
-    echo "Podman in use — skipping plaintext injection into $SAML_FILE"
-  fi
+        ' "$SAML_FILE" >"${SAML_FILE}.tmp" && mv "${SAML_FILE}.tmp" "$SAML_FILE"
+		fi
+		echo "Updated $SAML_FILE"
+	else
+		echo "Podman in use — skipping plaintext injection into $SAML_FILE"
+	fi
 else
-    echo "Skipping SAML override file as SAML is not enabled."
+	echo "Skipping SAML override file as SAML is not enabled."
 fi
 
 # —————————————————————————————————————————————————————————————
@@ -173,12 +173,12 @@ echo "Postgres host/IP:      $DB_IP"
 echo "Postgres password:     [set]"
 echo "Override file:         $OVERRIDE_FILE"
 if [[ "$ENABLE_SAML" == "y" ]]; then
-    echo "SAML enabled:          yes"
-    echo "KEYSTORE_PASSWORD:     [set]"
-    echo "KEY_ALIAS_PASSWORD:    [set]"
-    echo "SAML override file:    $SAML_FILE"
+	echo "SAML enabled:          yes"
+	echo "KEYSTORE_PASSWORD:     [set]"
+	echo "KEY_ALIAS_PASSWORD:    [set]"
+	echo "SAML override file:    $SAML_FILE"
 else
-    echo "SAML enabled:          no"
+	echo "SAML enabled:          no"
 fi
 echo
 echo "You can rerun this wizard to update your settings anytime."

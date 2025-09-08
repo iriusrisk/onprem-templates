@@ -4,7 +4,7 @@ repos:
     hooks:
       - id: shfmt
         files: ^scripts/.*\.sh$                # only run on scripts/*.sh
-        args: ["-ci", "-s"]  
+        args: ["-w", "-ci", "-s"]  
         # -w   = write changes in place
         # -ci  = indent switch cases
         # -s   = simplify code where possible

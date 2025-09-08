@@ -133,6 +133,38 @@ The container engine is selected automatically based on the detected Linux distr
 
 ---
 
+
+
+---
+
+## 🔄 Upgrading IriusRisk
+
+To upgrade an existing IriusRisk on-prem installation:
+
+1. **Navigate to the scripts folder**:
+   ```bash
+   cd onprem-templates/scripts
+   ```
+
+2. **Run the upgrade script**:
+   ```bash
+   ./upgrade.sh
+   ```
+
+3. **Answer interactive prompts**:
+   - **"How is your PostgreSQL configured?"** (internal or external)
+   - **"Are you using SAML?"** (yes/no)
+
+4. **Upgrade process**:
+   - The script backs up your PostgreSQL database to the `irius_backups/` directory inside the current user's home folder.
+   - Unused containers, networks, and images are cleaned up automatically.
+   - The running containers are stopped.
+   - The latest images are pulled from the repository.
+   - Containers are started again with the updated images and configuration.
+
+After completion, your deployment will be running on the latest available IriusRisk version.
+
+
 ## 📘 Additional Notes
 
 - **Certificates**: Self-signed certs are generated automatically if not provided.  

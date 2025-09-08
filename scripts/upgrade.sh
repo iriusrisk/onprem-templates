@@ -95,7 +95,7 @@ echo
 echo "Cleaning up current stack and pulling latest images"
 
 # Remove all unused containers, networks, images (both dangling and unreferenced)
-docker system prune -f
+$CONTAINER_ENGINE system prune -f
 
 COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
 

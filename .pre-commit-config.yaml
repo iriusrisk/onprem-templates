@@ -1,0 +1,10 @@
+repos:
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: v3.12.0-2
+    hooks:
+      - id: shfmt
+        files: ^scripts/.*\.sh$                # only run on scripts/*.sh
+        args: ["-w", "-ci", "-s"]  
+        # -w   = write changes in place
+        # -ci  = indent switch cases
+        # -s   = simplify code where possible

@@ -606,6 +606,94 @@ function build_compose_override() {
 	echo "$files"
 }
 
+# Build/refresh custom podman images used by podman-compose.yml
+# Usage: build_podman_custom_images "<tomcat_version_or_empty>"
+function build_podman_custom_images() {
+	local tv="$1"
+	[[ -z $tv ]] && tv="4" # default if not provided
+
+	echo "Preparing custom images for version: tomcat-${tv}"
+
+	# Clean any temp containers
+	podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
+
+	echo "Pulling base images..."
+	podman pull docker.io/continuumsecurity/iriusrisk-prod:nginx >/dev/null
+	podman pull "docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >/dev/null || {
+		echo "ERROR: Unable to pull docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >&2
+		return 1
+	}
+
+	echo "Customizing nginx → localhost/nginx-rhel"
+	podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
+		-c "set -eu; \
+        if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
+            (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
+        command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true; \
+        sleep 1"
+	podman commit \
+		--change='USER nginx' \
+		--change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
+		temp-nginx \
+		localhost/nginx-rhel >/dev/null
+	podman rm -f temp-nginx >/dev/null || true
+
+	echo "Customizing tomcat (base tomcat-${tv}) → localhost/tomcat-rhel"
+	podman run \
+		--name temp-tomcat \
+		--user root \
+		--entrypoint /bin/sh \
+		"docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" \
+		-c '\
+      set -eu; \
+      if [ -f /etc/alpine-release ]; then \
+          apk add --no-cache gnupg; \
+      else \
+          apt-get update && \
+          apt-get install -y --no-install-recommends gnupg && \
+          rm -rf /var/lib/apt/lists/*; \
+      fi; \
+      cat <<'"'"'EOF'"'"' > /usr/local/bin/expand-secrets.sh
+#!/usr/bin/env sh
+set -eu
+
+export_from_secret() {
+  var_name="$1"; cipher="$2"; priv="$3"
+  if [ -r "$cipher" ] && [ -r "$priv" ]; then
+    gpg --batch --import "$priv" >/dev/null 2>&1 || true
+    value="$(gpg --batch --yes --decrypt "$cipher" 2>/dev/null || true)"
+    if [ -n "$value" ]; then
+      export "$var_name=$value"
+    fi
+  fi
+}
+
+if [ -r /run/secrets/db_pwd ] && [ -r /run/secrets/db_privkey ]; then
+  gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1 || true
+  if dec="$(gpg --batch --yes --decrypt /run/secrets/db_pwd 2>/dev/null || true)"; then
+    if [ -n "$dec" ]; then
+      export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"
+    fi
+  fi
+fi
+
+export_from_secret KEYSTORE_PASSWORD   /run/secrets/keystore_pwd   /run/secrets/keystore_privkey
+export_from_secret KEY_ALIAS_PASSWORD  /run/secrets/key_alias_pwd  /run/secrets/key_alias_privkey
+
+exec /entrypoint/dynamic-entrypoint.sh "$@"
+EOF
+      chmod +x /usr/local/bin/expand-secrets.sh; \
+    '
+	podman commit \
+		--change='USER tomcat' \
+		--change='ENTRYPOINT ["/usr/local/bin/expand-secrets.sh"]' \
+		temp-tomcat \
+		localhost/tomcat-rhel >/dev/null
+	podman rm -f temp-tomcat >/dev/null || true
+
+	echo "Custom images ready: localhost/nginx-rhel, localhost/tomcat-rhel"
+}
+
 function stop_disable_user_units_for_project() {
 	local proj="$1"
 
@@ -937,4 +1025,27 @@ EOF
 	# Cleanup artifacts and the whole temporary keyring
 	rm -f "$enc_file" "$priv_file"
 	rm -rf "$homedir"
+}
+
+# Helper: update image line for a component that may be unversioned or versioned already
+# Usage: update_component_tag startleft "$SL_VER"
+function update_component_tag() {
+	local comp="$1" ver="$2"
+	[[ -z $ver ]] && {
+		echo "NOTE: No version provided for $comp in JSON; skipping."
+		return 0
+	}
+
+	# Match:
+	#   image: docker.io/continuumsecurity/iriusrisk-prod:<comp>
+	#   image: docker.io/continuumsecurity/iriusrisk-prod:<comp>-<digits[.digits...]>
+	# (docker.io/ prefix optional; whitespace & comments preserved)
+	if grep -qE "^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
+		sed -i -E \
+			"s@(^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
+			"$COMPOSE_YML"
+		echo "Updated ${comp} image tag → docker.io/continuumsecurity/iriusrisk-prod:${comp}-${ver}"
+	else
+		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
+	fi
 }

@@ -216,7 +216,6 @@ RemainAfterExit=true
 WorkingDirectory=$CONTAINER_DIR
 Environment=DOCKER_CONFIG=/etc/docker
 Environment=COMPOSE_INTERACTIVE_NO_CLI=1
-ExecStartPre=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE pull --quiet"
 ExecStart=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE up -d"
 ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
 
@@ -257,94 +256,8 @@ EOF
 			teardown_rootless_project "$CONTAINER_ENGINE"
 		fi
 
-		# --- Image tweaks that used to run with sudo ---
-		# You can still run root inside the container in rootless mode, so commits are fine.
-		# (No host setcap calls here; we only modify the container image itself if needed.)
-		echo "Preparing custom images (rootless)..."
-		podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
-
-		# NGINX image: ensure it can bind <1024 inside the container.
-		# NOTE: Binding privileged ports on the HOST in rootless requires either:
-		#   - sysctl net.ipv4.ip_unprivileged_port_start=80  (your PoC), or
-		#   - using 8080/8443 on the host and fronting with a host-level redirect/proxy.
-		podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
-			-c "set -eu; \
-                if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
-                    (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
-                command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true; \
-                sleep 1"
-
-		podman commit \
-			--change='USER nginx' \
-			--change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
-			temp-nginx \
-			localhost/nginx-rhel
-
-		podman rm -f temp-nginx || true
-		echo "Custom Nginx image created as localhost/nginx-rhel"
-
-		# TOMCAT wrapper to append decrypted secrets
-		podman run \
-			--name temp-tomcat \
-			--user root \
-			--entrypoint /bin/sh \
-			docker.io/continuumsecurity/iriusrisk-prod:tomcat-4 \
-			-c '\
-            set -eu; \
-            if [ -f /etc/alpine-release ]; then \
-                apk add --no-cache gnupg; \
-            else \
-                apt-get update && \
-                apt-get install -y --no-install-recommends gnupg && \
-                rm -rf /var/lib/apt/lists/*; \
-            fi; \
-            cat <<'"'EOF'"' > /usr/local/bin/expand-secrets.sh
-#!/usr/bin/env sh
-set -eu
-
-# Helper: decrypt into a shell var if both files exist
-#   usage: export_from_secret VAR_NAME /run/secrets/<cipher> /run/secrets/<privkey>
-export_from_secret() {
-  var_name="$1"; cipher="$2"; priv="$3"
-  if [ -r "$cipher" ] && [ -r "$priv" ]; then
-    gpg --batch --import "$priv" >/dev/null 2>&1 || true
-    value="$(gpg --batch --yes --decrypt "$cipher" 2>/dev/null || true)"
-    if [ -n "$value" ]; then
-      # Export into environment for downstream process
-      # shellcheck disable=SC2163
-      export "$var_name=$value"
-    fi
-  fi
-}
-
-# DB password → append to IRIUS_DB_URL
-if [ -r /run/secrets/db_pwd ] && [ -r /run/secrets/db_privkey ]; then
-  gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1 || true
-  if dec="$(gpg --batch --yes --decrypt /run/secrets/db_pwd 2>/dev/null || true)"; then
-    if [ -n "$dec" ]; then
-      export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"
-    fi
-  fi
-fi
-
-# SAML keystore passwords (only if provided as secrets)
-export_from_secret KEYSTORE_PASSWORD   /run/secrets/keystore_pwd   /run/secrets/keystore_privkey
-export_from_secret KEY_ALIAS_PASSWORD  /run/secrets/key_alias_pwd  /run/secrets/key_alias_privkey
-
-# Hand off to the real entrypoint
-exec /entrypoint/dynamic-entrypoint.sh "$@"
-EOF
-            chmod +x /usr/local/bin/expand-secrets.sh; \
-  '
-
-		podman commit \
-			--change='USER tomcat' \
-			--change='ENTRYPOINT ["/usr/local/bin/expand-secrets.sh"]' \
-			temp-tomcat \
-			localhost/tomcat-rhel
-
-		podman rm -f temp-tomcat || true
-		echo "Custom Tomcat created as localhost/tomcat-rhel"
+		# Build the custom rootless nginx and tomcat images
+		build_podman_custom_images
 
 		# --- Bring up containers (rootless) ---
 		eval "$UP_CMD"

@@ -21,6 +21,7 @@ init_logging "$0"
 echo "IriusRisk Upgrade Deployment"
 echo "---------------------------------------"
 
+# —————————————————————————————————————————————————————————————
 # 0. Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +36,12 @@ echo
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
 prompt_postgres_option upgrade
+
+if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
+	USE_INTERNAL_PG="y"
+else
+	USE_INTERNAL_PG="n"
+fi
 
 SAML_ENABLED=$(prompt_yn "Are you using SAML?")
 
@@ -63,13 +70,11 @@ cd ~
 BDIR="${BDIR:-/home/$USER/irius_backups}"
 TMP_DB="/tmp/irius.db.$TS.sql.gz"
 OUT_DB="$BDIR/irius.db.$VERSION.sql.gz"
-LATEST_DB="$BDIR/irius.db.latest.sql.gz"
 
 echo "Preparing backup directory at: $BDIR"
 mkdir -p "$BDIR"
 
-if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
-	USE_INTERNAL_PG="y"
+if [[ $USE_INTERNAL_PG == "y" ]]; then
 	# Ensure the postgres container is running
 	if ! $CONTAINER_ENGINE ps --format '{{.Names}}' | grep -Fxq "iriusrisk-postgres"; then
 		echo "ERROR: Container 'iriusrisk-postgres' is not running. Start it and retry." >&2
@@ -80,7 +85,6 @@ if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
 	$CONTAINER_ENGINE exec -u postgres "iriusrisk-postgres" \
 		pg_dump -d "iriusprod" | gzip >"$TMP_DB"
 else
-	USE_INTERNAL_PG="n"
 	DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
 	DB_PASS=$(prompt_nonempty "Enter the Postgres password")
 	PGPASSWORD="$DB_PASS" pg_dump -h "$DB_IP" -U "iriusprod" -d "iriusprod" | gzip >"$TMP_DB"
@@ -95,7 +99,6 @@ fi
 # Keep only latest: remove old DB backups, then move new one in place and update 'latest'
 rm -f "$BDIR"/irius.db.*.sql.gz || true
 mv -f "$TMP_DB" "$OUT_DB"
-ln -sfn "$(basename "$OUT_DB")" "$LATEST_DB"
 
 DB_SIZE="$(du -h "$OUT_DB" | cut -f1)"
 echo "DB backup completed: $DB_SIZE -> $OUT_DB"
@@ -108,7 +111,6 @@ COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
 TMP_COMPOSE_TAR="/tmp/irius.compose.$TS.tar.gz"
 OUT_COMPOSE_TAR="$BDIR/irius.compose.$VERSION.tar.gz"
-LATEST_COMPOSE_TAR="$BDIR/irius.compose.latest.tar.gz"
 
 echo "Backing up compose files referenced in COMPOSE_OVERRIDE from: $COMPOSE_DIR"
 # Parse -f arguments safely
@@ -163,7 +165,6 @@ if [[ ${#valid_files[@]} -gt 0 ]]; then
 	# Keep only latest compose backup
 	rm -f "$BDIR"/irius.compose.*.tar.gz || true
 	mv -f "$TMP_COMPOSE_TAR" "$OUT_COMPOSE_TAR"
-	ln -sfn "$(basename "$OUT_COMPOSE_TAR")" "$LATEST_COMPOSE_TAR"
 	C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
 	echo "Compose files backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 else
@@ -268,7 +269,7 @@ if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		exit 5
 	fi
 else
-	echo "[podman] Compose uses localhost/tomcat-rhel; will rebuild the local image instead of sed."
+	echo "Compose uses localhost/tomcat-rhel; will rebuild the local image instead of sed."
 fi
 
 # —————————————————————————————————————————————————————————————

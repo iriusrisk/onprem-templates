@@ -1,0 +1,16 @@
+{
+    "IriusRisk": {
+        "S": "4.22.3"
+    },
+    "Startleft": {
+        "S": "1.20.0"
+    },
+    "Analytics": {
+        "S": "3054"
+    },
+    "ReportingModule": {
+        "S": "1.0.1"
+    },
+"AI": { 
+  "S": "3" }
+}

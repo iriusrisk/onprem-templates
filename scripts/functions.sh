@@ -49,7 +49,7 @@ function prompt_engine() {
 
 function prompt_postgres_option() {
 	local mode="$1"
-	if [[ $mode == "upgrade" ]]; then
+	if [[ $mode == "upgrade" || $mode == "migrate" ]]; then
 		echo "How is your PostgreSQL configured?"
 	else
 		echo "How do you want to configure PostgreSQL?"
@@ -1048,4 +1048,86 @@ function update_component_tag() {
 	else
 		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
 	fi
+}
+
+# —————————————————————————————————————————————————————————————
+# Migration + upgrade functions
+# —————————————————————————————————————————————————————————————
+
+function die() {
+	echo "ERROR: $*" >&2
+	exit 2
+}
+
+# Trim spaces
+function trim() { sed -E 's/^[[:space:]]+|[[:space:]]+$//g'; }
+
+# Replace just the VALUE part of a YAML env list line:
+#   "      - KEY=anything"  ->  "      - KEY=<value>"
+# Preserves the indent and "- KEY=" prefix.
+# args: file, key, value
+replace_env_value() {
+	local file="$1" key="$2" val="$3"
+
+	# Escape chars that are special in sed replacement: \ & |
+	local esc_val
+	esc_val=$(printf '%s' "$val" | sed -e 's/[\\&|]/\\&/g')
+
+	# Replace everything AFTER "KEY=" while preserving "  - KEY="
+	sed -i -E "s|(^[[:space:]]*-[[:space:]]*${key}=).*|\1${esc_val}|" "$file"
+}
+
+function backup_db() {
+	#Get version for backup filenames
+	TS="${TS:-$(date +%s)}"
+	HEALTH_URL="${HEALTH_URL:-https://localhost/health}"
+	echo "Fetching version from $HEALTH_URL ..."
+	RAW_HEALTH="$(curl -ksS --max-time 5 "$HEALTH_URL" || true)"
+
+	# Extract first X.Y.Z from "version":"..." if present; else fallback to TS
+	if [[ $RAW_HEALTH =~ \"version\":\"([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		VERSION="${BASH_REMATCH[1]}"
+		echo "Detected version: $VERSION"
+	else
+		VERSION="$TS"
+		echo "WARNING: Could not parse version; using timestamp: $VERSION"
+	fi
+	echo
+
+	cd ~
+	BDIR="${BDIR:-/home/$USER/irius_backups}"
+	TMP_DB="/tmp/irius.db.$TS.sql.gz"
+	OUT_DB="$BDIR/irius.db.$VERSION.sql.gz"
+
+	echo "Preparing backup directory at: $BDIR"
+	mkdir -p "$BDIR"
+
+	if [[ $USE_INTERNAL_PG == "y" ]]; then
+		# Ensure the postgres container is running
+		if ! $CONTAINER_ENGINE ps --format '{{.Names}}' | grep -Fxq "iriusrisk-postgres"; then
+			echo "ERROR: Container 'iriusrisk-postgres' is not running. Start it and retry." >&2
+			exit 2
+		fi
+
+		echo "Backing up database iriusprod from container 'iriusrisk-postgres' ..."
+		$CONTAINER_ENGINE exec -u postgres "iriusrisk-postgres" \
+			pg_dump -d "iriusprod" | gzip >"$TMP_DB"
+	else
+		DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
+		DB_PASS=$(prompt_nonempty "Enter the Postgres password")
+		PGPASSWORD="$DB_PASS" pg_dump -h "$DB_IP" -U "iriusprod" -d "iriusprod" | gzip >"$TMP_DB"
+	fi
+
+	# Sanity check: non-empty output
+	if [[ ! -s $TMP_DB ]]; then
+		echo "ERROR: DB backup file is empty (pg_dump likely failed)." >&2
+		exit 3
+	fi
+
+	# Keep only latest: remove old DB backups, then move new one in place
+	rm -f "$BDIR"/irius.db.*.sql.gz || true
+	mv -f "$TMP_DB" "$OUT_DB"
+
+	DB_SIZE="$(du -h "$OUT_DB" | cut -f1)"
+	echo "DB backup completed: $DB_SIZE -> $OUT_DB"
 }

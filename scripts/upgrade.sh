@@ -46,66 +46,12 @@ fi
 SAML_ENABLED=$(prompt_yn "Are you using SAML?")
 
 # —————————————————————————————————————————————————————————————
-# 2. Get version for backup filenames
+# 2. Backup DB
 # —————————————————————————————————————————————————————————————
-TS="${TS:-$(date +%s)}"
-HEALTH_URL="${HEALTH_URL:-https://localhost/health}"
-echo "Fetching version from $HEALTH_URL ..."
-RAW_HEALTH="$(curl -ksS --max-time 5 "$HEALTH_URL" || true)"
-
-# Extract first X.Y.Z from "version":"..." if present; else fallback to TS
-if [[ $RAW_HEALTH =~ \"version\":\"([0-9]+\.[0-9]+\.[0-9]+) ]]; then
-	VERSION="${BASH_REMATCH[1]}"
-	echo "Detected version: $VERSION"
-else
-	VERSION="$TS"
-	echo "WARNING: Could not parse version; using timestamp: $VERSION"
-fi
-echo
+backup_db
 
 # —————————————————————————————————————————————————————————————
-# 3. Backup DB
-# —————————————————————————————————————————————————————————————
-cd ~
-BDIR="${BDIR:-/home/$USER/irius_backups}"
-TMP_DB="/tmp/irius.db.$TS.sql.gz"
-OUT_DB="$BDIR/irius.db.$VERSION.sql.gz"
-
-echo "Preparing backup directory at: $BDIR"
-mkdir -p "$BDIR"
-
-if [[ $USE_INTERNAL_PG == "y" ]]; then
-	# Ensure the postgres container is running
-	if ! $CONTAINER_ENGINE ps --format '{{.Names}}' | grep -Fxq "iriusrisk-postgres"; then
-		echo "ERROR: Container 'iriusrisk-postgres' is not running. Start it and retry." >&2
-		exit 2
-	fi
-
-	echo "Backing up database iriusprod from container 'iriusrisk-postgres' ..."
-	$CONTAINER_ENGINE exec -u postgres "iriusrisk-postgres" \
-		pg_dump -d "iriusprod" | gzip >"$TMP_DB"
-else
-	DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
-	DB_PASS=$(prompt_nonempty "Enter the Postgres password")
-	PGPASSWORD="$DB_PASS" pg_dump -h "$DB_IP" -U "iriusprod" -d "iriusprod" | gzip >"$TMP_DB"
-fi
-
-# Sanity check: non-empty output
-if [[ ! -s $TMP_DB ]]; then
-	echo "ERROR: DB backup file is empty (pg_dump likely failed)." >&2
-	exit 3
-fi
-
-# Keep only latest: remove old DB backups, then move new one in place and update 'latest'
-rm -f "$BDIR"/irius.db.*.sql.gz || true
-mv -f "$TMP_DB" "$OUT_DB"
-
-DB_SIZE="$(du -h "$OUT_DB" | cut -f1)"
-echo "DB backup completed: $DB_SIZE -> $OUT_DB"
-echo
-
-# —————————————————————————————————————————————————————————————
-# 4. Backup compose files
+# 3. Backup compose files
 # —————————————————————————————————————————————————————————————
 COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
@@ -173,7 +119,7 @@ fi
 popd >/dev/null
 
 # —————————————————————————————————————————————————————————————
-# 5. Discover highest tomcat tag (Hub API v2, private repo) & update compose
+# 4. Discover highest tomcat tag (Hub API v2, private repo) & update compose
 # —————————————————————————————————————————————————————————————
 
 REPO_NS="continuumsecurity"
@@ -273,7 +219,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 6. Update Startleft & Reporting Module tags from /versions/<ver>.json
+# 5. Update Startleft & Reporting Module tags from /versions/<ver>.json
 # —————————————————————————————————————————————————————————————
 VERSIONS_DIR="$SCRIPT_PATH/../versions"
 VER_FILE="$VERSIONS_DIR/$CHOSEN_VERSION.json"
@@ -291,7 +237,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Rebuild local base images for podman
+# 6. Rebuild local base images for podman
 # —————————————————————————————————————————————————————————————
 
 if [[ $CONTAINER_ENGINE == "podman" ]]; then
@@ -300,7 +246,7 @@ if [[ $CONTAINER_ENGINE == "podman" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Update the stack
+# 7. Update the stack
 # —————————————————————————————————————————————————————————————
 
 echo "Cleaning up current stack and pulling latest images"

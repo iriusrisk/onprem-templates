@@ -19,6 +19,7 @@ services:
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
     volumes:
+      - "./ec_private.pem:/etc/irius/ec_private.pem"
       - "./SAMLv2-config.groovy:/etc/irius/SAMLv2-config.groovy" 
       - "./idp.xml:/etc/irius/idp.xml" 
       - "./iriusrisk-sp.jks:/etc/irius/iriusrisk-sp.jks"

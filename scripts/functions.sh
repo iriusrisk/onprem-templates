@@ -1279,7 +1279,9 @@ function backup_db() {
 
 	if [[ $USE_INTERNAL_PG == "y" ]]; then
 		# Ensure the postgres container is running
-		if ! $CONTAINER_ENGINE ps --format '{{.Names}}' | grep -Fxq "iriusrisk-postgres"; then
+		if ! $CONTAINER_ENGINE ps \
+			--filter "name=^iriusrisk-postgres$" \
+			--format '{{.Names}}' | grep -q .; then
 			echo "ERROR: Container 'iriusrisk-postgres' is not running. Start it and retry." >&2
 			exit 2
 		fi

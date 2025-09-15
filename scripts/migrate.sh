@@ -169,9 +169,15 @@ else
 	IRIUS_DB_URL="$(printf '%s' "$IRIUS_DB_URL" | sed -E 's/\\:/:/g; s/\\=/=/g; s/\\\?/?/g')"
 fi
 
-# Remove password from legacy DB URL for Podman
+# Create DB secrets if using podman
 if [[ $CONTAINER_ENGINE == "podman" ]]; then
-	IRIUS_DB_URL="$(printf '%s' "$IRIUS_DB_URL" | sed -E 's/&password\\=[^[:space:]]*$//')"
+	DB_PASS="$(printf '%s' "$IRIUS_DB_URL" | awk -F'password=' '{print $2}')"
+	encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
+fi
+
+# Remove password from legacy DB URL for Podman (assumes it's the last param)
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	IRIUS_DB_URL="${IRIUS_DB_URL%%&password=*}"
 fi
 
 # SAML detection
@@ -259,11 +265,6 @@ fi
 
 if [[ -n ${IRIUS_DB_URL:-} ]]; then
 	replace_env_value "$OVR" "IRIUS_DB_URL" "IRIUS_DB_URL=${IRIUS_DB_URL}"
-fi
-# Create DB secrets if using podman
-if [[ $CONTAINER_ENGINE == "podman" ]]; then
-	DB_PASS="$(printf '%s' "$IRIUS_DB_URL" | awk -F'password\\\\=' '{print $2}')"
-	encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
 fi
 
 if [[ -n ${IRIUS_EXT_URL:-} ]]; then

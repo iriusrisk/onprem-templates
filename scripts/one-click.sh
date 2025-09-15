@@ -167,9 +167,6 @@ if [[ $DEPLOY_OK == "n" ]]; then
 	exit 0
 fi
 
-# ---- LOGIN TO CONTAINER REGISTRY ----
-container_registry_login
-
 # —————————————————————————————————————————————————————————————
 # 8. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————

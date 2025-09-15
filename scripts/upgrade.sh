@@ -250,8 +250,8 @@ fi
 # —————————————————————————————————————————————————————————————
 
 echo "Cleaning up current stack and pulling latest images"
+container_registry_login
 $CONTAINER_ENGINE system prune -f
-
 cd "$COMPOSE_DIR"
 
 # Destroy whole IriusRisk stack

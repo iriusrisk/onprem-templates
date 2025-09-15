@@ -1051,6 +1051,8 @@ function update_component_tag() {
 }
 
 function deploy_stack() {
+	container_registry_login
+
 	case "$CONTAINER_ENGINE" in
 		docker)
 			echo

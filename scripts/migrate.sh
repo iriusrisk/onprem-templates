@@ -72,7 +72,7 @@ echo "Legacy compose: $LEGACY_COMPOSE_FILE"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 3. Backups — reuse your shared helper (sets TS, VERSION, BDIR, OUT_DB)
+# 3. Backups — reuse shared helper (sets TS, VERSION, BDIR, OUT_DB)
 # —————————————————————————————————————————————————————————————
 backup_db
 
@@ -169,6 +169,11 @@ else
 	IRIUS_DB_URL="$(printf '%s' "$IRIUS_DB_URL" | sed -E 's/\\:/:/g; s/\\=/=/g; s/\\\?/?/g')"
 fi
 
+# Remove password from legacy DB URL for Podman
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	IRIUS_DB_URL="$(printf '%s' "$IRIUS_DB_URL" | sed -E 's/&password\\=[^[:space:]]*$//')"
+fi
+
 # SAML detection
 if [[ -n ${KEYSTORE_PASSWORD:-} || -n ${KEY_ALIAS_PASSWORD:-} ]]; then
 	SAML_ENABLED="y"
@@ -255,6 +260,11 @@ fi
 if [[ -n ${IRIUS_DB_URL:-} ]]; then
 	replace_env_value "$OVR" "IRIUS_DB_URL" "IRIUS_DB_URL=${IRIUS_DB_URL}"
 fi
+# Create DB secrets if using podman
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	DB_PASS="$(printf '%s' "$IRIUS_DB_URL" | awk -F'password\\\\=' '{print $2}')"
+	encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
+fi
 
 if [[ -n ${IRIUS_EXT_URL:-} ]]; then
 	replace_env_value "$OVR" "IRIUS_EXT_URL" "IRIUS_EXT_URL=${IRIUS_EXT_URL}"
@@ -265,12 +275,18 @@ echo
 
 # SAML override updates (only if passwords detected AND file exists)
 if [[ $SAML_ENABLED == "y" && -f $SAML_OVR ]]; then
-	echo "Updating SAML override: $SAML_OVR"
-	if [[ -n ${KEYSTORE_PASSWORD:-} ]]; then
-		replace_env_value "$SAML_OVR" "KEYSTORE_PASSWORD" "KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}"
-	fi
-	if [[ -n ${KEY_ALIAS_PASSWORD:-} ]]; then
-		replace_env_value "$SAML_OVR" "KEY_ALIAS_PASSWORD" "KEY_ALIAS_PASSWORD=${KEY_ALIAS_PASSWORD}"
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
+		echo "Updating SAML override: $SAML_OVR"
+		if [[ -n ${KEYSTORE_PASSWORD:-} ]]; then
+			replace_env_value "$SAML_OVR" "KEYSTORE_PASSWORD" "KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}"
+		fi
+		if [[ -n ${KEY_ALIAS_PASSWORD:-} ]]; then
+			replace_env_value "$SAML_OVR" "KEY_ALIAS_PASSWORD" "KEY_ALIAS_PASSWORD=${KEY_ALIAS_PASSWORD}"
+		fi
+	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
+		podman secret rm keystore_pwd keystore_privkey key_alias_pwd key_alias_privkey 2>/dev/null || true
+		encrypt_and_store_secret "$KEYSTORE_PASSWORD" "keystore_pwd" "keystore_privkey"
+		encrypt_and_store_secret "$KEY_ALIAS_PASSWORD" "key_alias_pwd" "key_alias_privkey"
 	fi
 	echo "SAML override updates complete."
 	echo

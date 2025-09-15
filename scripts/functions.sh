@@ -1051,8 +1051,6 @@ function update_component_tag() {
 }
 
 function deploy_stack() {
-	CONTAINER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd ../$CONTAINER_ENGINE && pwd)"
-
 	case "$CONTAINER_ENGINE" in
 		docker)
 			echo

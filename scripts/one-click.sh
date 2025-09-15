@@ -20,6 +20,7 @@ echo "---------------------------------------"
 # 0. Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_PATH/.." && pwd)"
 cd "$SCRIPT_PATH"
 
 echo "Current directory: $(pwd)"
@@ -172,6 +173,7 @@ container_registry_login
 # —————————————————————————————————————————————————————————————
 # 8. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
+CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 deploy_stack
 
 echo

@@ -22,6 +22,7 @@ echo "---------------------------------------"
 # 0. Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_PATH/.." && pwd)"
 cd "$SCRIPT_PATH"
 echo "Current directory: $(pwd)"
 echo
@@ -189,8 +190,7 @@ echo
 # —————————————————————————————————————————————————————————————
 # 5. Copy certs / SAML files from legacy into repo engine dir
 # —————————————————————————————————————————————————————————————
-REPO_ENGINE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
-mkdir -p "$REPO_ENGINE_DIR"
+CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 
 # Volume path lookups (basename compare; no awk regex escapes)
 get_volume_host_path() { # SVC FILENAME
@@ -231,17 +231,17 @@ copy_if() {
 	fi
 }
 
-echo "Copying cert/SAML material to repo engine dir: $REPO_ENGINE_DIR"
-copy_if "$LEG_CERT" "$REPO_ENGINE_DIR/cert.pem"
-copy_if "$LEG_KEY" "$REPO_ENGINE_DIR/key.pem"
-copy_if "$LEG_EC" "$REPO_ENGINE_DIR/ec_private.pem"
+echo "Copying cert/SAML material to repo engine dir: $CONTAINER_DIR"
+copy_if "$LEG_CERT" "$CONTAINER_DIR/cert.pem"
+copy_if "$LEG_KEY" "$CONTAINER_DIR/key.pem"
+copy_if "$LEG_EC" "$CONTAINER_DIR/ec_private.pem"
 echo
 
 # —————————————————————————————————————————————————————————————
 # 6. Update automation compose overrides with extracted values
 # —————————————————————————————————————————————————————————————
-OVR="$REPO_ENGINE_DIR/$CONTAINER_ENGINE-compose.override.yml"
-SAML_OVR="$REPO_ENGINE_DIR/$CONTAINER_ENGINE-compose.saml.yml"
+OVR="$CONTAINER_DIR/$CONTAINER_ENGINE-compose.override.yml"
+SAML_OVR="$CONTAINER_DIR/$CONTAINER_ENGINE-compose.saml.yml"
 
 [[ -f $OVR ]] || die "Expected override file not found: $OVR"
 
@@ -286,6 +286,6 @@ cd "$LEGACY_DIR"
 $COMPOSE_TOOL -f $LEGACY_COMPOSE_FILE down --remove-orphans
 
 echo
-echo "Deploying new Docker Compose stack from: $REPO_ENGINE_DIR"
+echo "Deploying new Docker Compose stack from: $CONTAINER_DIR"
 
 deploy_stack

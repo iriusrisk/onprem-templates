@@ -277,26 +277,15 @@ if [[ $SAML_ENABLED == "y" && -f $SAML_OVR ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Done — print next steps
+# 7. Switch over: stop legacy stack, start new stack, create systemd service
 # —————————————————————————————————————————————————————————————
-echo "Migration complete."
+
+echo "Switching stacks ..."
+
+cd "$LEGACY_DIR"
+$COMPOSE_TOOL -f $LEGACY_COMPOSE_FILE down --remove-orphans
+
 echo
-echo "What changed:"
-echo " - Backups written to: $BDIR"
-echo "   * DB  -> $OUT_DB"
-echo "   * CFG -> $OUT_COMPOSE_TAR"
-echo " - Certificates & keys copied to: $REPO_ENGINE_DIR (cert.pem, key.pem, ec_private.pem if present)"
-if [[ $SAML_ENABLED == "y" ]]; then
-	echo " - SAML passwords inserted into: $SAML_OVR"
-fi
-echo " - Overrides updated in: $OVR"
-echo
-echo "Next steps:"
-echo "  1) Review changes in $REPO_ENGINE_DIR/"
-echo "  2) From $REPO_ENGINE_DIR, bring the stack up with:"
-echo "       $CONTAINER_ENGINE system prune -f"
-echo "       $COMPOSE_TOOL -f $CONTAINER_ENGINE-compose.yml -f $CONTAINER_ENGINE-compose.override.yml \\"
-if [[ $SAML_ENABLED == "y" ]]; then
-	echo "                      -f $CONTAINER_ENGINE-compose.saml.yml \\"
-fi
-echo "                      up -d"
+echo "Deploying new Docker Compose stack from: $REPO_ENGINE_DIR"
+
+deploy_stack

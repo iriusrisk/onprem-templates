@@ -288,6 +288,5 @@ When finished, your deployment will be running the restored version of IriusRisk
 
 ## 📎 Support & Docs
 
-- [Installing and Configuring IriusRisk On-Premise (Docker)](https://enterprise-support.iriusrisk.com/s/article/Installing-and-Configuring-IriusRisk-On-Premise)  
-- [Installing and Configuring IriusRisk On-Premise with Podman](https://enterprise-support.iriusrisk.com/s/article/Installing-and-Configuring-IriusRisk-On-Premise-with-Podman)  
+- [Hardware and Software Requirements for IriusRisk](https://enterprise-support.iriusrisk.com/s/article/Hardware-and-Software-Requirements-for-IriusRisk)  
 - [Azure SAML Example](https://enterprise-support.iriusrisk.com/s/article/SAML-use-case-Microsoft-Azure-as-Identity-Provider)  

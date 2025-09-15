@@ -260,15 +260,15 @@ echo "Updating overrides in: $OVR"
 
 # Replace full lines for safety; falls back to generic if placeholders differ
 if [[ -n ${NG_SERVER_NAME:-} ]]; then
-	replace_env_value "$OVR" "NG_SERVER_NAME" "NG_SERVER_NAME=${NG_SERVER_NAME}"
+	replace_env_value "$OVR" "NG_SERVER_NAME" $NG_SERVER_NAME
 fi
 
 if [[ -n ${IRIUS_DB_URL:-} ]]; then
-	replace_env_value "$OVR" "IRIUS_DB_URL" "IRIUS_DB_URL=${IRIUS_DB_URL}"
+	replace_env_value "$OVR" "IRIUS_DB_URL" $IRIUS_DB_URL
 fi
 
 if [[ -n ${IRIUS_EXT_URL:-} ]]; then
-	replace_env_value "$OVR" "IRIUS_EXT_URL" "IRIUS_EXT_URL=${IRIUS_EXT_URL}"
+	replace_env_value "$OVR" "IRIUS_EXT_URL" $IRIUS_EXT_URL
 fi
 
 echo "Override updates complete."
@@ -279,10 +279,10 @@ if [[ $SAML_ENABLED == "y" && -f $SAML_OVR ]]; then
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		echo "Updating SAML override: $SAML_OVR"
 		if [[ -n ${KEYSTORE_PASSWORD:-} ]]; then
-			replace_env_value "$SAML_OVR" "KEYSTORE_PASSWORD" "KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}"
+			replace_env_value "$SAML_OVR" "KEYSTORE_PASSWORD" $KEYSTORE_PASSWORD
 		fi
 		if [[ -n ${KEY_ALIAS_PASSWORD:-} ]]; then
-			replace_env_value "$SAML_OVR" "KEY_ALIAS_PASSWORD" "KEY_ALIAS_PASSWORD=${KEY_ALIAS_PASSWORD}"
+			replace_env_value "$SAML_OVR" "KEY_ALIAS_PASSWORD" $KEY_ALIAS_PASSWORD
 		fi
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		podman secret rm keystore_pwd keystore_privkey key_alias_pwd key_alias_privkey 2>/dev/null || true

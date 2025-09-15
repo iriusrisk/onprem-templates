@@ -44,13 +44,13 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 
 ### `one-click.sh`
 - The main **end-to-end installer**.
-- Ensures you’re in the right directory, detects the Linux distribution, selects the appropriate container engine automatically, sets up PostgreSQL (internal container, external DB, or local install), and then deploys IriusRisk.
+- Ensures you’re in the right directory, detects the Linux distribution, selects the appropriate container engine automatically, sets up PostgreSQL (internal container or external DB), and then deploys IriusRisk.
 - Calls other helper scripts (`preflight.sh`, `setup-wizard.sh`) as needed.
 - Recommended if you’ve already cloned the repo and are inside the `scripts/` directory.
 
 ### `setup-wizard.sh`
 - Runs interactively and asks questions about:
-  - PostgreSQL setup (internal, external, or host-installed)
+  - PostgreSQL setup (internal or external)
   - Hostname and external URLs
   - SAML integration
 - Updates configuration files accordingly.
@@ -288,6 +288,5 @@ When finished, your deployment will be running the restored version of IriusRisk
 
 ## 📎 Support & Docs
 
-- [Installing and Configuring IriusRisk On-Premise (Docker)](https://enterprise-support.iriusrisk.com/s/article/Installing-and-Configuring-IriusRisk-On-Premise)  
-- [Installing and Configuring IriusRisk On-Premise with Podman](https://enterprise-support.iriusrisk.com/s/article/Installing-and-Configuring-IriusRisk-On-Premise-with-Podman)  
+- [Hardware and Software Requirements for IriusRisk](https://enterprise-support.iriusrisk.com/s/article/Hardware-and-Software-Requirements-for-IriusRisk)  
 - [Azure SAML Example](https://enterprise-support.iriusrisk.com/s/article/SAML-use-case-Microsoft-Azure-as-Identity-Provider)  

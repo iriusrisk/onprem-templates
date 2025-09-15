@@ -9,3 +9,6 @@ postgres
 
 # Ignore logs
 logs/
+
+# Ignore .env
+.env

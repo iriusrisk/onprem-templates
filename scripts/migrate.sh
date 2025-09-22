@@ -198,55 +198,55 @@ else
 fi
 echo
 
-# —————————————————————————————————————————————————————————————
-# 5. Copy certs / SAML files from legacy into repo engine dir
-# —————————————————————————————————————————————————————————————
+# ------------------------------------------------------------
+# 5. Copy certs + SAML files from legacy into the new engine dir
+# ------------------------------------------------------------
 CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 
-# Volume path lookups (basename compare; no awk regex escapes)
-get_volume_host_path() { # SVC FILENAME
-	local svc="$1" fname="$2"
-	awk -v SVC="$svc" -v FNAME="$fname" '
-    BEGIN{in_services=0; in_svc=0; in_vol=0; svc_indent=-1}
-    /^[[:space:]]*services:[[:space:]]*$/ {in_services=1; next}
-    in_services {
-      if (match($0, /^([[:space:]]*)([A-Za-z0-9_-]+):[[:space:]]*$/, m)) {
-        curr=m[2]; curr_indent=length(m[1])
-        if (in_svc && curr_indent<=svc_indent) { in_svc=0; in_vol=0 }
-        if (curr==SVC) { in_svc=1; in_vol=0; svc_indent=curr_indent; next }
-      }
-      if (in_svc && /^[[:space:]]*volumes:[[:space:]]*$/) { in_vol=1; next }
-      if (in_vol && /^[[:space:]]*[A-Za-z0-9_-]+:/) { in_vol=0 }
-      if (in_svc && in_vol && match($0, /^[[:space:]]*-[[:space:]]*([^:]+):/, m)) {
-        hp=m[1]; n=split(hp, parts, "/"); base=parts[n]
-        if (base==FNAME) { print hp; exit }
-      }
-    }
-  ' "$FILE"
-}
+# --- Certificates (nginx + tomcat) ---
+copy_required "cert.pem" "$CONTAINER_DIR/cert.pem" \
+	"$LEGACY_DIR/cert.pem" "cert.pem"
+copy_required "key.pem" "$CONTAINER_DIR/key.pem" \
+	"$LEGACY_DIR/key.pem" "ec_private.pem" "key.pem"
+copy_required "ec_private.pem" "$CONTAINER_DIR/ec_private.pem" \
+	"$LEGACY_DIR/ec_private.pem" "ec_private.pem"
 
-LEG_CERT="$(get_volume_host_path nginx "cert.pem" || true)"
-LEG_KEY="$(get_volume_host_path nginx "key.pem" || true)"
-LEG_EC="$(get_volume_host_path tomcat "ec_private.pem" || true)"
+# Set sane permissions
+[[ -f "$CONTAINER_DIR/cert.pem" ]] && chmod 640 "$CONTAINER_DIR/cert.pem"
+[[ -f "$CONTAINER_DIR/key.pem" ]] && chmod 640 "$CONTAINER_DIR/key.pem"
+[[ -f "$CONTAINER_DIR/ec_private.pem" ]] && chmod 640 "$CONTAINER_DIR/ec_private.pem"
 
-# Fallback default names if not found via volumes
-[[ -z ${LEG_CERT:-} ]] && [[ -f "$LEGACY_DIR/cert.pem" ]] && LEG_CERT="$LEGACY_DIR/cert.pem"
-[[ -z ${LEG_KEY:-} ]] && [[ -f "$LEGACY_DIR/key.pem" ]] && LEG_KEY="$LEGACY_DIR/key.pem"
-[[ -z ${LEG_EC:-} ]] && [[ -f "$LEGACY_DIR/ec_private.pem" ]] && LEG_EC="$LEGACY_DIR/ec_private.pem"
+# --- SAML files (only if enabled) ---
+if [[ $SAML_ENABLED == "y" ]]; then
+	echo "SAML enabled: copying SAML artifacts..."
 
-copy_if() {
-	local src="$1" dst="$2"
-	if [[ -n $src && -f $src ]]; then
-		cp -f "$src" "$dst"
-		echo "  Copied $(basename "$src") -> $dst"
-	fi
-}
+	# All three are usually required when SAML is on
+	copy_required "SAMLv2-config.groovy" "$CONTAINER_DIR/SAMLv2-config.groovy" \
+		"$LEGACY_DIR/SAMLv2-config.groovy" "SAMLv2-config.groovy"
 
-echo "Copying cert/SAML material to repo engine dir: $CONTAINER_DIR"
-copy_if "$LEG_CERT" "$CONTAINER_DIR/cert.pem"
-copy_if "$LEG_KEY" "$CONTAINER_DIR/key.pem"
-copy_if "$LEG_EC" "$CONTAINER_DIR/ec_private.pem"
-echo
+	copy_required "idp.xml" "$CONTAINER_DIR/idp.xml" \
+		"$LEGACY_DIR/idp.xml" "idp.xml"
+
+	copy_required "iriusrisk-sp.jks" "$CONTAINER_DIR/iriusrisk-sp.jks" \
+		"$LEGACY_DIR/iriusrisk-sp.jks" "iriusrisk-sp.jks"
+
+	# Permissions
+	chmod 640 "$CONTAINER_DIR/SAMLv2-config.groovy" "$CONTAINER_DIR/idp.xml" 2>/dev/null || true
+	chmod 600 "$CONTAINER_DIR/iriusrisk-sp.jks" 2>/dev/null || true
+fi
+
+# Final sanity: ensure the files that MUST be files are indeed files
+for must in "$CONTAINER_DIR/cert.pem" "$CONTAINER_DIR/key.pem"; do
+	[[ -f $must ]] || die "required file missing: $must"
+done
+
+if [[ ${SAML_ENABLED,,} == "y" ]]; then
+	for must in "$CONTAINER_DIR/SAMLv2-config.groovy" "$CONTAINER_DIR/idp.xml" "$CONTAINER_DIR/iriusrisk-sp.jks"; do
+		[[ -f $must ]] || die "required SAML file missing: $must"
+	done
+fi
+
+echo "Copy step completed."
 
 # —————————————————————————————————————————————————————————————
 # 6. Update automation compose overrides with extracted values

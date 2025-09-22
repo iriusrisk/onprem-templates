@@ -1310,3 +1310,60 @@ function backup_db() {
 	DB_SIZE="$(du -h "$OUT_DB" | cut -f1)"
 	echo "DB backup completed: $DB_SIZE -> $OUT_DB"
 }
+
+# If given a relative path, anchor it to LEGACY_DIR. If empty, prints nothing.
+function normalize_src() {
+	local p="${1:-}"
+	[[ -z $p ]] && return 0
+	case "$p" in
+		/*) printf '%s\n' "$p" ;;
+		./*) printf '%s\n' "$LEGACY_DIR/${p#./}" ;;
+		*) printf '%s\n' "$LEGACY_DIR/$p" ;;
+	esac
+}
+
+# Find the first existing file among candidates; searches LEGACY_DIR if needed.
+function find_first_file() {
+	local cand
+	for cand in "$@"; do
+		cand="$(normalize_src "$cand")"
+		[[ -n $cand && -f $cand ]] && {
+			printf '%s\n' "$cand"
+			return 0
+		}
+	done
+	# Fallback: if the last arg looks like a bare filename, try locating it under LEGACY_DIR
+	local last="${*: -1}"
+	if [[ $last != */* ]]; then
+		# search up to a few levels; quiet errors if perms block
+		local hit
+		hit="$(find "$LEGACY_DIR" -maxdepth 4 -type f -name "$last" 2>/dev/null | head -n1)"
+		[[ -n $hit ]] && {
+			printf '%s\n' "$hit"
+			return 0
+		}
+	fi
+	return 1
+}
+
+# Ensure the destination path is not a directory placeholder
+function ensure_dest_file_slot() {
+	local dst="$1"
+	if [[ -d $dst ]]; then
+		echo "WARNING: '$dst' is a directory; removing so a file can be placed there."
+		rm -rf -- "$dst"
+	fi
+}
+
+# Copy one required artifact; dies if not found
+function copy_required() {
+	local display="$1" dest="$2"
+	shift 2
+	local src
+	if ! src="$(find_first_file "$@")"; then
+		die "could not locate required file for $display (looked for: $*)"
+	fi
+	ensure_dest_file_slot "$dest"
+	cp -f -- "$src" "$dest" || die "copy failed: $src -> $dest"
+	echo "Copied $(basename "$src") -> $dest"
+}

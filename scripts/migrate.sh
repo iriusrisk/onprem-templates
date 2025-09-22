@@ -80,8 +80,8 @@ backup_db
 TMP_COMPOSE_TAR="/tmp/irius.compose.$TS.tar.gz"
 OUT_COMPOSE_TAR="$BDIR/irius.compose.$VERSION.tar.gz"
 (
-	cd "$LEGACY_DIR"
-	tar -czf "$TMP_COMPOSE_TAR" "$(basename "$LEGACY_COMPOSE_FILE")" ./*.pem ./*.crt ./*.cer ./*.key 2>/dev/null || true
+	cd "$(dirname "$LEGACY_DIR")" || exit 1
+	tar -czf "$TMP_COMPOSE_TAR" "$(basename "$LEGACY_DIR")"
 )
 rm -f "$BDIR"/irius.compose.*.tar.gz || true
 mv -f "$TMP_COMPOSE_TAR" "$OUT_COMPOSE_TAR"

@@ -137,6 +137,37 @@ The container engine is selected automatically based on the detected Linux distr
 
 ---
 
+
+
+## 🧩 Managing the Stack
+
+You can control the IriusRisk stack directly through `systemctl`.
+
+**Podman (rootless):**
+```bash
+# Stop stack
+systemctl --user stop --all 'container-*.service'
+
+# Start stack
+systemctl --user start --all 'container-*.service'
+
+# Restart stack
+systemctl --user restart --all 'container-*.service'
+```
+
+**Docker:**
+```bash
+# Start stack
+systemctl start iriusrisk-docker
+
+# Stop stack
+systemctl stop iriusrisk-docker
+
+# Restart stack
+systemctl restart iriusrisk-docker
+```
+
+
 ## 🔄 Upgrading IriusRisk
 
 To upgrade an existing IriusRisk on-prem installation:
@@ -191,6 +222,37 @@ If an upgrade fails or you need to return to a previous version, you can roll ba
    - The stack is restarted with the restored configuration and data.
 
 When finished, your deployment will be running the restored version of IriusRisk with the database and compose configuration as they were at the time of the backup.
+
+---
+
+## 🔀 Migrating to the New Stack
+
+To migrate an existing IriusRisk on-prem installation to the new template-based setup:
+
+1. **Navigate to the scripts folder**:
+   ```bash
+   cd onprem-templates/scripts
+   ```
+
+2. **Run the migration script**:
+   ```bash
+   ./migrate.sh
+   ```
+
+3. **Answer interactive prompts**:
+   - Confirm your PostgreSQL setup (internal container or external host).
+   - The script will attempt to locate your existing Docker or Podman installation. If it cannot, you will be asked to provide the location.
+
+4. **Migration process** (high-level overview):
+   - A full backup of the database and legacy configuration directory is created.
+   - Existing configuration details (from your compose file) are extracted.
+   - Certificates and SAML configuration (if present) are migrated into the new template structure.
+   - For Podman users, required secrets are created automatically.
+   - Old containers are stopped and the new stack is deployed.
+
+5. **After migration**:
+   - Verify that your deployment is working as expected.
+   - Once confirmed, you may safely delete the legacy directory if you no longer need it.
 
 ---
 

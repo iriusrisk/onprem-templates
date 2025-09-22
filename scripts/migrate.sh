@@ -231,7 +231,7 @@ for must in "$CONTAINER_DIR/cert.pem" "$CONTAINER_DIR/key.pem"; do
 	[[ -f $must ]] || die "required file missing: $must"
 done
 
-if [[ ${SAML_ENABLED,,} == "y" ]]; then
+if [[ $SAML_ENABLED == "y" ]]; then
 	for must in "$CONTAINER_DIR/SAMLv2-config.groovy" "$CONTAINER_DIR/idp.xml" "$CONTAINER_DIR/iriusrisk-sp.jks"; do
 		[[ -f $must ]] || die "required SAML file missing: $must"
 	done

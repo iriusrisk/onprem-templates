@@ -211,11 +211,6 @@ copy_required "key.pem" "$CONTAINER_DIR/key.pem" \
 copy_required "ec_private.pem" "$CONTAINER_DIR/ec_private.pem" \
 	"$LEGACY_DIR/ec_private.pem" "ec_private.pem"
 
-# Set sane permissions
-[[ -f "$CONTAINER_DIR/cert.pem" ]] && chmod 640 "$CONTAINER_DIR/cert.pem"
-[[ -f "$CONTAINER_DIR/key.pem" ]] && chmod 640 "$CONTAINER_DIR/key.pem"
-[[ -f "$CONTAINER_DIR/ec_private.pem" ]] && chmod 640 "$CONTAINER_DIR/ec_private.pem"
-
 # --- SAML files (only if enabled) ---
 if [[ $SAML_ENABLED == "y" ]]; then
 	echo "SAML enabled: copying SAML artifacts..."
@@ -229,10 +224,6 @@ if [[ $SAML_ENABLED == "y" ]]; then
 
 	copy_required "iriusrisk-sp.jks" "$CONTAINER_DIR/iriusrisk-sp.jks" \
 		"$LEGACY_DIR/iriusrisk-sp.jks" "iriusrisk-sp.jks"
-
-	# Permissions
-	chmod 640 "$CONTAINER_DIR/SAMLv2-config.groovy" "$CONTAINER_DIR/idp.xml" 2>/dev/null || true
-	chmod 600 "$CONTAINER_DIR/iriusrisk-sp.jks" 2>/dev/null || true
 fi
 
 # Final sanity: ensure the files that MUST be files are indeed files

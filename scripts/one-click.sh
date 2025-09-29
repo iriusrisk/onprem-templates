@@ -10,6 +10,31 @@ fi
 
 init_logging "$0"
 
+# Offline mode setup
+
+OFFLINE=0
+OFFLINE_BUNDLE_DIR="${OFFLINE_BUNDLE_DIR:-./offline_bundle}"
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--offline)
+			OFFLINE=1
+			shift
+			;;
+		--bundle)
+			OFFLINE_BUNDLE_DIR="$2"
+			shift 2
+			;;
+		*)
+			ARGS+=("$1")
+			shift
+			;;
+	esac
+done
+set -- "${ARGS[@]:-}"
+
+export OFFLINE OFFLINE_BUNDLE_DIR
+
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————
@@ -51,19 +76,21 @@ PRE_ERRS=$(grep 'ERROR:' preflight_output.txt | grep -v '^ERRORS:' || true)
 PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
 
 # —————————————————————————————————————————————————————————————
-# 4. Install missing dependencies
+# 5. Install missing dependencies
 # —————————————————————————————————————————————————————————————
-if echo "$PRE_ERRS" | grep -q "git is not installed"; then
-	install_git
-fi
-if echo "$PRE_ERRS" | grep -q "Java not found"; then
-	install_java
-fi
-if echo "$PRE_ERRS" | grep -q "psql is not installed"; then
-	install_psql
-fi
-if echo "$PRE_ERRS" | grep -q "jq is not installed"; then
-	install_jq
+if [ "$OFFLINE" -eq 0 ]; then
+	if echo "$PRE_ERRS" | grep -q "git is not installed"; then
+		install_git
+	fi
+	if echo "$PRE_ERRS" | grep -q "Java not found"; then
+		install_java
+	fi
+	if echo "$PRE_ERRS" | grep -q "psql is not installed"; then
+		install_psql
+	fi
+	if echo "$PRE_ERRS" | grep -q "jq is not installed"; then
+		install_jq
+	fi
 fi
 
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
@@ -91,12 +118,14 @@ if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		fi
 	fi
 elif [[ $CONTAINER_ENGINE == "podman" ]]; then
-	# Install podman if missing
-	if ! command -v podman &>/dev/null; then
-		install_podman
-	fi
-	if ! command -v podman-compose &>/dev/null; then
-		install_podman
+	if [ "$OFFLINE" -eq 0 ]; then
+		# Install podman if missing
+		if ! command -v podman &>/dev/null; then
+			install_podman
+		fi
+		if ! command -v podman-compose &>/dev/null; then
+			install_podman
+		fi
 	fi
 
 	# Ensure we will run podman rootless as the invoking user (no sudo anywhere)
@@ -104,9 +133,22 @@ elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 
 	# Rootless pre-reqs (linger, config dirs, networking)
 	setup_podman_rootless "${ROOTLESS_USER}"
+	if [ "$OFFLINE" -eq 1 ]; then
+		ensure_subids_for_user "${ROOTLESS_USER}"
+	fi
 else
 	echo "Unknown container engine: $CONTAINER_ENGINE"
 	exit 1
+fi
+
+# Offline mode setup
+if [ "$OFFLINE" -eq 1 ]; then
+	echo "[offline] Enabling offline mode using bundle at: $OFFLINE_BUNDLE_DIR"
+	require_rhel
+	offline_setup_local_repos         # install deps from bundled RPMs
+	offline_install_dependencies      # podman/podman-compose/java.psql/jq
+	offline_load_images               # load all *.oci.tar
+	offline_block_external_registries # avoid accidental pulls
 fi
 
 prompt_postgres_option setup
@@ -120,7 +162,7 @@ elif [[ $POSTGRES_SETUP_OPTION == "2" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 5. Run setup-wizard
+# 6. Run setup-wizard
 # —————————————————————————————————————————————————————————————
 echo
 echo "Launching the setup wizard..."
@@ -149,7 +191,7 @@ SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh"
 PRE_ERR=$?
 
 # —————————————————————————————————————————————————————————————
-# 6. Block on critical errors
+# 7. Block on critical errors
 # —————————————————————————————————————————————————————————————
 if [[ $PRE_ERR -ne 0 ]]; then
 	echo
@@ -159,7 +201,7 @@ if [[ $PRE_ERR -ne 0 ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Confirm deploy (validate Y/N)
+# 8. Confirm deploy (validate Y/N)
 # —————————————————————————————————————————————————————————————
 DEPLOY_OK=$(prompt_yn "All checks complete. Proceed with deployment?")
 if [[ $DEPLOY_OK == "n" ]]; then
@@ -168,7 +210,7 @@ if [[ $DEPLOY_OK == "n" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Deploy based on selected engine
+# 9. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
 CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 deploy_stack

@@ -265,14 +265,15 @@ function install_and_configure_postgres() {
 		# Create and encrypt db pass secret
 		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
 
-		podman rm -f "$tmp_name" 2>/dev/null || true
+		if [[ $OFFLINE -eq 0 ]]; then
+			podman rm -f "$tmp_name" 2>/dev/null || true
 
-		podman run \
-			--name "$tmp_name" \
-			--user root \
-			--entrypoint /bin/sh \
-			"$base_image" \
-			-c "\
+			podman run \
+				--name "$tmp_name" \
+				--user root \
+				--entrypoint /bin/sh \
+				"$base_image" \
+				-c "\
             set -eu; \
             # install gnupg
             if [ -f /etc/alpine-release ]; then \
@@ -297,12 +298,13 @@ EOF
         chmod +x /usr/local/bin/pg-expand-secret.sh; \
 "
 
-		podman commit \
-			--change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
-			--change='CMD ["postgres"]' \
-			"$tmp_name" "$patched_image"
+			podman commit \
+				--change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
+				--change='CMD ["postgres"]' \
+				"$tmp_name" "$patched_image"
 
-		podman rm "$tmp_name"
+			podman rm "$tmp_name"
+		fi
 
 		# --- Graceful down then hard teardown for a clean slate ---
 		# Bring down anything that may be up for this project (best effort)
@@ -617,12 +619,14 @@ function build_podman_custom_images() {
 	# Clean any temp containers
 	podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
 
-	echo "Pulling base images..."
-	podman pull docker.io/continuumsecurity/iriusrisk-prod:nginx >/dev/null
-	podman pull "docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >/dev/null || {
-		echo "ERROR: Unable to pull docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >&2
-		return 1
-	}
+	if [ "$OFFLINE" -eq 0 ]; then
+		echo "Pulling base images..."
+		podman pull docker.io/continuumsecurity/iriusrisk-prod:nginx >/dev/null
+		podman pull "docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >/dev/null || {
+			echo "ERROR: Unable to pull docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >&2
+			return 1
+		}
+	fi
 
 	echo "Customizing nginx → localhost/nginx-rhel"
 	podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
@@ -1051,7 +1055,9 @@ function update_component_tag() {
 }
 
 function deploy_stack() {
-	container_registry_login
+	if [ "$OFFLINE" -eq 0 ]; then
+		container_registry_login
+	fi
 
 	case "$CONTAINER_ENGINE" in
 		docker)
@@ -1135,8 +1141,10 @@ EOF
 				teardown_rootless_project "$CONTAINER_ENGINE"
 			fi
 
-			# Build the custom rootless nginx and tomcat images
-			build_podman_custom_images
+			if [[ $OFFLINE -eq 0 ]]; then
+				# Build the custom rootless nginx and tomcat images
+				build_podman_custom_images
+			fi
 
 			# --- Bring up containers (rootless) ---
 			eval "$UP_CMD"
@@ -1366,4 +1374,157 @@ function copy_required() {
 	ensure_dest_file_slot "$dest"
 	cp -f -- "$src" "$dest" || die "copy failed: $src -> $dest"
 	echo "Copied $(basename "$src") -> $dest"
+}
+
+# —————————————————————————————————————————————————————————————
+# Offline mode functions
+# —————————————————————————————————————————————————————————————
+
+# ====== RHEL detection ======
+function require_rhel() {
+	if [[ ! -f /etc/redhat-release ]]; then
+		echo "This offline mode expects RHEL-compatible host." >&2
+		exit 1
+	fi
+}
+
+# ====== Offline repo from bundled RPMs ======
+# Expect: $OFFLINE_BUNDLE_DIR/rpms/ with repodata already generated on the builder.
+function offline_setup_local_repos() {
+	local repo_dir="$OFFLINE_BUNDLE_DIR/rpms"
+	if [[ ! -d "$repo_dir/repodata" ]]; then
+		echo "[offline] ERROR: $repo_dir missing repodata. Build-side script must run createrepo_c." >&2
+		exit 1
+	fi
+
+	sudo mkdir -p /opt/offline-rpms
+	sudo rsync -a "$repo_dir/" /opt/offline-rpms/
+
+	sudo tee /etc/yum.repos.d/offline-local.repo >/dev/null <<'EOF'
+[offline-local]
+name=Offline Local Repo
+baseurl=file:///opt/offline-rpms
+enabled=1
+gpgcheck=0
+EOF
+
+	# Keep network repos disabled during offline mode
+	sudo dnf clean all -y
+}
+
+# ====== Install required packages offline ======
+function offline_install_dependencies() {
+	local pkgs=(java-17-openjdk postgresql jq container-tools podman-compose python3-dotenv nftables iptables-nft slirp4netns aardvark-dns)
+	# Prefer built-in podman compose; also provide podman-compose if bundled.
+	# podman compose is part of podman on modern RHEL; keep podman-compose optional.
+	sudo dnf --disablerepo="*" --enablerepo="offline-local" install -y "${pkgs[@]}" || {
+		echo "[offline] Failed installing base packages from offline repo." >&2
+		exit 1
+	}
+}
+
+# ====== Block external registries (safety) ======
+function offline_block_external_registries() {
+	sudo mkdir -p /etc/containers/registries.conf.d
+	sudo tee /etc/containers/registries.conf.d/00-airgap.conf >/dev/null <<'CONF'
+unqualified-search-registries = ["localhost"]
+[[registry]]
+location = "docker.io"
+blocked = true
+CONF
+}
+
+# ====== Load images from bundle ======
+# Expect: $OFFLINE_BUNDLE_DIR/images/*.oci.tar created by builder.
+function offline_load_images() {
+	local bundle="$OFFLINE_BUNDLE_DIR"
+	local img_dir="$bundle/images"
+	[[ -d $img_dir ]] || {
+		echo "[offline] images dir missing: $img_dir"
+		exit 1
+	}
+
+	# Verify checksums (normalize paths just in case)
+	local csum="$bundle/checksums.sha256"
+	if [[ -f $csum ]]; then
+		echo "[offline] Verifying bundle checksums"
+		local tmp="$bundle/.checksums.normalized"
+		awk '{
+      hash=$1; file=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", hash)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", file)
+      gsub(/^.*\//, "", file)
+      print hash "  images/" file
+    }' "$csum" >"$tmp"
+		(cd "$bundle" && sha256sum -c "$tmp")
+	fi
+
+	# filename -> desired repo:tag
+	_ref_from_filename() {
+		local base="$1"              # e.g. docker.io_continuumsecurity_iriusrisk-prod_tomcat-4
+		local registry="${base%%_*}" # docker.io | ghcr.io | quay.io | localhost
+		local rest="${base#*_}"      # continuumsecurity_iriusrisk-prod_tomcat-4  | nginx-rhel
+		IFS='_' read -r -a parts <<<"$rest"
+		local tag="latest"
+		if ((${#parts[@]} >= 2)); then
+			tag="${parts[-1]}"
+			unset 'parts[-1]'
+		fi
+		local repo_path=""
+		if ((${#parts[@]} > 0)); then
+			repo_path="$(printf "/%s" "${parts[@]}")"
+			repo_path="${repo_path#/}"
+		fi
+		echo "${registry}/${repo_path}:${tag}"
+	}
+
+	# read first OCI manifest digest from index.json (no jq)
+	_oci_manifest_digest() {
+		local tarball="$1"
+		tar -xOf "$tarball" index.json 2>/dev/null |
+			tr -d '\n' |
+			sed -n 's/.*"manifests"[[:space:]]*:[[:space:]]*\[[[:space:]]*{[^}]*"digest"[[:space:]]*:[[:space:]]*"\([^"]\+\)".*/\1/p' |
+			head -n1
+	}
+
+	echo "[offline] Loading images (via skopeo -> containers-storage)…"
+	shopt -s nullglob
+	for tarball in "$img_dir"/*.oci.tar; do
+		base="$(basename "$tarball" .oci.tar)"
+		ref="$(_ref_from_filename "$base")" # e.g. docker.io/continuumsecurity/...:reporting-module
+		echo "  - $tarball -> $ref"
+
+		# Import directly into local storage under the target name
+		# (avoid --all to sidestep multi-arch manifest issues; host arch will be picked)
+		if skopeo copy --insecure-policy "oci-archive:$tarball" "containers-storage:$ref" >/dev/null 2>&1; then
+			echo "    -> imported to containers-storage:$ref"
+		else
+			echo "    !! skopeo copy failed for $tarball, trying podman load + tag"
+			out="$(podman load -i "$tarball" 2>&1 || true)"
+			loaded_name="$(awk '/^Loaded image: /{print $3}' <<<"$out")"
+			loaded_id="$(awk '/^Loaded image ID: /{print $5}' <<<"$out")"
+			if [[ -n $loaded_name && $loaded_name != sha256:* ]]; then
+				echo "    -> embedded name preserved: $loaded_name"
+			elif [[ -n $loaded_id ]]; then
+				echo "    -> tagging $loaded_id as $ref"
+				podman tag "$loaded_id" "$ref"
+			else
+				echo "    !! could not determine image ID for $tarball; skipping tag"
+			fi
+		fi
+	done
+
+	echo "[offline] Done. Current images:"
+	podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Created}}\t{{.Size}}"
+}
+
+function ensure_subids_for_user() {
+	local u="$1"
+	if ! grep -q "^${u}:" /etc/subuid 2>/dev/null; then
+		echo "${u}:100000:65536" | sudo tee -a /etc/subuid >/dev/null
+	fi
+	if ! grep -q "^${u}:" /etc/subgid 2>/dev/null; then
+		echo "${u}:100000:65536" | sudo tee -a /etc/subgid >/dev/null
+	fi
+	podman system migrate
 }

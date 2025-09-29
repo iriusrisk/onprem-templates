@@ -40,7 +40,7 @@ else
 	USE_INTERNAL_PG="n"
 fi
 
-SAML_ENABLED="n"
+ENABLE_SAML_ONCLICK="n"
 
 # —————————————————————————————————————————————————————————————
 # 2. Locate legacy install (~/docker or ~/podman)
@@ -182,14 +182,14 @@ fi
 
 # SAML detection
 if [[ -n ${KEYSTORE_PASSWORD:-} || -n ${KEY_ALIAS_PASSWORD:-} ]]; then
-	SAML_ENABLED="y"
+	ENABLE_SAML_ONCLICK="y"
 fi
 
 echo "Parsing legacy compose for config values ..."
 echo "  NG_SERVER_NAME   : ${NG_SERVER_NAME:-<not found>}"
 echo "  IRIUS_DB_URL     : ${IRIUS_DB_URL:-<not found>}"
 echo "  IRIUS_EXT_URL    : ${IRIUS_EXT_URL:-<not found>}"
-if [[ $SAML_ENABLED == "y" ]]; then
+if [[ $ENABLE_SAML_ONCLICK == "y" ]]; then
 	echo "  SAML detected    : yes"
 	echo "  KEYSTORE_PASSWORD: ${KEYSTORE_PASSWORD:-<empty>}"
 	echo "  KEY_ALIAS_PASSWORD: ${KEY_ALIAS_PASSWORD:-<empty>}"
@@ -212,7 +212,7 @@ copy_required "ec_private.pem" "$CONTAINER_DIR/ec_private.pem" \
 	"$LEGACY_DIR/ec_private.pem" "ec_private.pem"
 
 # --- SAML files (only if enabled) ---
-if [[ $SAML_ENABLED == "y" ]]; then
+if [[ $ENABLE_SAML_ONCLICK == "y" ]]; then
 	echo "SAML enabled: copying SAML artifacts..."
 
 	# All three are usually required when SAML is on
@@ -231,7 +231,7 @@ for must in "$CONTAINER_DIR/cert.pem" "$CONTAINER_DIR/key.pem"; do
 	[[ -f $must ]] || die "required file missing: $must"
 done
 
-if [[ $SAML_ENABLED == "y" ]]; then
+if [[ $ENABLE_SAML_ONCLICK == "y" ]]; then
 	for must in "$CONTAINER_DIR/SAMLv2-config.groovy" "$CONTAINER_DIR/idp.xml" "$CONTAINER_DIR/iriusrisk-sp.jks"; do
 		[[ -f $must ]] || die "required SAML file missing: $must"
 	done
@@ -266,7 +266,7 @@ echo "Override updates complete."
 echo
 
 # SAML override updates (only if passwords detected AND file exists)
-if [[ $SAML_ENABLED == "y" && -f $SAML_OVR ]]; then
+if [[ $ENABLE_SAML_ONCLICK == "y" && -f $SAML_OVR ]]; then
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		echo "Updating SAML override: $SAML_OVR"
 		if [[ -n ${KEYSTORE_PASSWORD:-} ]]; then

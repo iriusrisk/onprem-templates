@@ -49,7 +49,7 @@ function prompt_engine() {
 
 function prompt_postgres_option() {
 	local mode="$1"
-	if [[ $mode == "upgrade" ]]; then
+	if [[ $mode == "upgrade" || $mode == "migrate" ]]; then
 		echo "How is your PostgreSQL configured?"
 	else
 		echo "How do you want to configure PostgreSQL?"
@@ -1048,4 +1048,322 @@ function update_component_tag() {
 	else
 		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
 	fi
+}
+
+function deploy_stack() {
+	container_registry_login
+
+	case "$CONTAINER_ENGINE" in
+		docker)
+			echo
+			echo "Deploying with Docker Compose..."
+
+			DOCKER_COMPOSE_PATH="$(which docker-compose 2>/dev/null)"
+			cd "$CONTAINER_DIR"
+
+			if [[ -z $DOCKER_USER ]]; then
+				DOCKER_USER="$USER"
+			fi
+
+			# Build commands
+			COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
+			CLEAN_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE down --remove-orphans\""
+			PS_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE ps -q\""
+			PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
+
+			if [[ -n $PS_OUTPUT ]]; then
+				echo "Cleaning up existing containers for this project..."
+				sg docker -c "cd $(pwd) && $CLEAN_CMD"
+				# Force-remove any leftover containers by their container_name
+				for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
+					sg docker -c "docker rm -f $svc 2>/dev/null || true"
+				done
+			fi
+
+			# Dynamically write systemd unit file
+			SERVICE_NAME="iriusrisk-docker.service"
+
+			cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME
+[Unit]
+Description=IriusRisk Docker Compose Stack
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=$CONTAINER_DIR
+Environment=DOCKER_CONFIG=/etc/docker
+Environment=COMPOSE_INTERACTIVE_NO_CLI=1
+ExecStart=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE up -d"
+ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+			# Ensure docker login works for service
+			sudo mkdir -p /etc/docker
+			sudo cp ~/.docker/config.json /etc/docker/config.json
+			sudo chmod 600 /etc/docker/config.json
+			sudo chown root:root /etc/docker/config.json
+
+			# Start service
+			sudo systemctl daemon-reload
+			sudo systemctl enable $SERVICE_NAME
+			sudo systemctl restart $SERVICE_NAME
+			;;
+		podman)
+			echo
+			echo "Deploying with Podman Compose (rootless)..."
+			cd "$CONTAINER_DIR"
+
+			# Build override flags once
+			COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
+
+			# Decide compose up/ps commands (rootless, without sudo)
+			UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
+			PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
+			DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
+
+			# --- Clean up any existing stack for this project (rootless) ---
+			if [ "$($PS_CMD 2>/dev/null)" ]; then
+				echo "Cleaning up existing containers for this project..."
+				# Stop compose and make sure nothing lingers
+				$DOWN_CMD || true
+				stop_disable_user_units_for_project "$CONTAINER_ENGINE"
+				teardown_rootless_project "$CONTAINER_ENGINE"
+			fi
+
+			# Build the custom rootless nginx and tomcat images
+			build_podman_custom_images
+
+			# --- Bring up containers (rootless) ---
+			eval "$UP_CMD"
+
+			# Discover compose project label
+			PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
+			if [[ -z $PROJECT_LABEL ]]; then
+				PROJECT_LABEL="$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')"
+			fi
+
+			# Collect ALL containers in the project (running or not)
+			mapfile -t containers < <(
+				podman ps -a \
+					--filter "label=io.podman.compose.project=${PROJECT_LABEL}" \
+					--format "{{.Names}}"
+			)
+
+			# Bail out only if literally no containers exist for the project
+			if [[ ${#containers[@]} -eq 0 ]]; then
+				echo "No containers found for project '${PROJECT_LABEL}'."
+				echo "Tip: check 'podman-compose $COMPOSE_OVERRIDE ps -a' output."
+				exit 0
+			fi
+
+			echo "Generating user systemd unit files..."
+			UNIT_DIR="$HOME/.config/systemd/user"
+			mkdir -p "$UNIT_DIR"
+			generated_any=0
+			for cname in "${containers[@]}"; do
+				podman generate systemd --files --name "$cname" \
+					2> >(grep -v "DEPRECATED command" >&2)
+				[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ && generated_any=1
+			done
+			[[ $generated_any -eq 0 ]] && echo "No unit files generated; check project label: ${PROJECT_LABEL}"
+
+			# Harden generated user units for rootless Podman/runtime dir
+			for cname in "${containers[@]}"; do
+				svc="$UNIT_DIR/container-$cname.service"
+				[[ -f $svc ]] || continue
+				grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" ||
+					sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
+				grep -q '^Environment=TMPDIR=%t' "$svc" ||
+					sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
+				grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" ||
+					sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
+			done
+
+			# Ensure nginx waits for tomcat (order + requirement across reboots)
+			svc="$UNIT_DIR/container-iriusrisk-nginx.service"
+			if [[ -f $svc ]]; then
+				grep -q '^After=container-iriusrisk-tomcat.service' "$svc" ||
+					sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
+				grep -q '^Requires=container-iriusrisk-tomcat.service' "$svc" ||
+					sed -i '/^\[Unit\]/a Requires=container-iriusrisk-tomcat.service' "$svc"
+			fi
+
+			# Ensure Podman uses per-boot runtime dir in interactive shells
+			if ! grep -q 'XDG_RUNTIME_DIR=.*run/user' ~/.bash_profile 2>/dev/null; then
+				cat <<'EOF' >>~/.bash_profile
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export TMPDIR="${TMPDIR:-$XDG_RUNTIME_DIR}"
+EOF
+			fi
+
+			# Make sure we can talk to user systemd in this run (no start now; just enable)
+			if ! ensure_user_systemd_ready "$(id -un)"; then
+				echo "WARNING: user systemd not reachable; units placed in $UNIT_DIR."
+				echo "They will start on next login/reboot (linger enabled). To enable manually later:"
+				echo "  ensure_user_systemd_ready \"$(id -un)\" && systemctl --user enable container-*.service"
+			else
+				systemctl --user daemon-reload
+
+				for cname in "${containers[@]}"; do
+					svc="container-$cname.service"
+					if [[ -f "$UNIT_DIR/$svc" ]]; then
+						systemctl --user enable "$svc" || echo "WARNING: failed to enable $svc"
+					else
+						echo "WARNING: unit file missing: $UNIT_DIR/$svc"
+					fi
+				done
+			fi
+			echo "Podman rootless systemd user services created and enabled."
+			;;
+		*)
+			echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
+			exit 1
+			;;
+	esac
+}
+
+# —————————————————————————————————————————————————————————————
+# Migration + upgrade functions
+# —————————————————————————————————————————————————————————————
+
+function die() {
+	echo "ERROR: $*" >&2
+	exit 2
+}
+
+# Trim spaces
+function trim() { sed -E 's/^[[:space:]]+|[[:space:]]+$//g'; }
+
+# Replace just the VALUE part of a YAML env list line:
+#   "      - KEY=anything"  ->  "      - KEY=<value>"
+# Preserves the indent and "- KEY=" prefix.
+# args: file, key, value
+replace_env_value() {
+	local file="$1" key="$2" val="$3"
+
+	# Escape chars that are special in sed replacement: \ & |
+	local esc_val
+	esc_val=$(printf '%s' "$val" | sed -e 's/[\\&|]/\\&/g')
+
+	# Replace everything AFTER "KEY=" while preserving "  - KEY="
+	sed -i -E "s|(^[[:space:]]*-[[:space:]]*${key}=).*|\1${esc_val}|" "$file"
+}
+
+function backup_db() {
+	#Get version for backup filenames
+	TS="${TS:-$(date +%s)}"
+	HEALTH_URL="${HEALTH_URL:-https://localhost/health}"
+	echo "Fetching version from $HEALTH_URL ..."
+	RAW_HEALTH="$(curl -ksS --max-time 5 "$HEALTH_URL" || true)"
+
+	# Extract first X.Y.Z from "version":"..." if present; else fallback to TS
+	if [[ $RAW_HEALTH =~ \"version\":\"([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+		VERSION="${BASH_REMATCH[1]}"
+		echo "Detected version: $VERSION"
+	else
+		VERSION="$TS"
+		echo "WARNING: Could not parse version; using timestamp: $VERSION"
+	fi
+	echo
+
+	cd ~
+	BDIR="${BDIR:-/home/$USER/irius_backups}"
+	TMP_DB="/tmp/irius.db.$TS.sql.gz"
+	OUT_DB="$BDIR/irius.db.$VERSION.sql.gz"
+
+	echo "Preparing backup directory at: $BDIR"
+	mkdir -p "$BDIR"
+
+	if [[ $USE_INTERNAL_PG == "y" ]]; then
+		# Ensure the postgres container is running
+		if ! $CONTAINER_ENGINE ps \
+			--filter "name=^iriusrisk-postgres$" \
+			--format '{{.Names}}' | grep -q .; then
+			echo "ERROR: Container 'iriusrisk-postgres' is not running. Start it and retry." >&2
+			exit 2
+		fi
+
+		echo "Backing up database iriusprod from container 'iriusrisk-postgres' ..."
+		$CONTAINER_ENGINE exec -u postgres "iriusrisk-postgres" \
+			pg_dump -d "iriusprod" | gzip >"$TMP_DB"
+	else
+		DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
+		DB_PASS=$(prompt_nonempty "Enter the Postgres password")
+		PGPASSWORD="$DB_PASS" pg_dump -h "$DB_IP" -U "iriusprod" -d "iriusprod" | gzip >"$TMP_DB"
+	fi
+
+	# Sanity check: non-empty output
+	if [[ ! -s $TMP_DB ]]; then
+		echo "ERROR: DB backup file is empty (pg_dump likely failed)." >&2
+		exit 3
+	fi
+
+	# Keep only latest: remove old DB backups, then move new one in place
+	rm -f "$BDIR"/irius.db.*.sql.gz || true
+	mv -f "$TMP_DB" "$OUT_DB"
+
+	DB_SIZE="$(du -h "$OUT_DB" | cut -f1)"
+	echo "DB backup completed: $DB_SIZE -> $OUT_DB"
+}
+
+# If given a relative path, anchor it to LEGACY_DIR. If empty, prints nothing.
+function normalize_src() {
+	local p="${1:-}"
+	[[ -z $p ]] && return 0
+	case "$p" in
+		/*) printf '%s\n' "$p" ;;
+		./*) printf '%s\n' "$LEGACY_DIR/${p#./}" ;;
+		*) printf '%s\n' "$LEGACY_DIR/$p" ;;
+	esac
+}
+
+# Find the first existing file among candidates; searches LEGACY_DIR if needed.
+function find_first_file() {
+	local cand
+	for cand in "$@"; do
+		cand="$(normalize_src "$cand")"
+		[[ -n $cand && -f $cand ]] && {
+			printf '%s\n' "$cand"
+			return 0
+		}
+	done
+	# Fallback: if the last arg looks like a bare filename, try locating it under LEGACY_DIR
+	local last="${*: -1}"
+	if [[ $last != */* ]]; then
+		# search up to a few levels; quiet errors if perms block
+		local hit
+		hit="$(find "$LEGACY_DIR" -maxdepth 4 -type f -name "$last" 2>/dev/null | head -n1)"
+		[[ -n $hit ]] && {
+			printf '%s\n' "$hit"
+			return 0
+		}
+	fi
+	return 1
+}
+
+# Ensure the destination path is not a directory placeholder
+function ensure_dest_file_slot() {
+	local dst="$1"
+	if [[ -d $dst ]]; then
+		echo "WARNING: '$dst' is a directory; removing so a file can be placed there."
+		rm -rf -- "$dst"
+	fi
+}
+
+# Copy one required artifact; dies if not found
+function copy_required() {
+	local display="$1" dest="$2"
+	shift 2
+	local src
+	if ! src="$(find_first_file "$@")"; then
+		die "could not locate required file for $display (looked for: $*)"
+	fi
+	ensure_dest_file_slot "$dest"
+	cp -f -- "$src" "$dest" || die "copy failed: $src -> $dest"
+	echo "Copied $(basename "$src") -> $dest"
 }

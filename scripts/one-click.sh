@@ -125,21 +125,10 @@ fi
 echo
 echo "Launching the setup wizard..."
 set +e
-if [[ $POSTGRES_SETUP_OPTION == "3" ]]; then
-	# We want to prefill the external DB choice and details
-	CONTAINER_ENGINE="$CONTAINER_ENGINE" \
-		SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
-		USE_INTERNAL_PG="$USE_INTERNAL_PG" \
-		DB_IP="$DB_IP" \
-		DB_PASS="$DB_PASS" \
-		./setup-wizard.sh
-else
-	# Let setup-wizard prompt for everything as usual (internal/external/etc)
-	CONTAINER_ENGINE="$CONTAINER_ENGINE" \
-		SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
-		USE_INTERNAL_PG="$USE_INTERNAL_PG" \
-		./setup-wizard.sh
-fi
+CONTAINER_ENGINE="$CONTAINER_ENGINE" \
+	SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
+	USE_INTERNAL_PG="$USE_INTERNAL_PG" \
+	./setup-wizard.sh
 set -e
 
 echo

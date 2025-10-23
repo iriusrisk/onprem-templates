@@ -591,17 +591,28 @@ function check_file() {
 }
 
 function build_compose_override() {
-	local enable_saml="$1"
-	local use_internal_pg="$2"
+	local enable_saml use_internal_pg
+	enable_saml="${1:-}"
+	use_internal_pg="${2:-}"
+
 	local base_files="-f $CONTAINER_ENGINE-compose.yml -f $CONTAINER_ENGINE-compose.override.yml"
 	local files="$base_files"
 
-	if [[ ${enable_saml,,} == "y" ]]; then
-		files="$files -f $CONTAINER_ENGINE-compose.saml.yml"
+	# If only one arg is provided, interpret it as the Postgres flag (back-compat)
+	if [[ -z $use_internal_pg && -n $enable_saml ]]; then
+		use_internal_pg="$enable_saml"
+		enable_saml=""
 	fi
-	if [[ ${use_internal_pg,,} == "y" ]]; then
-		files="$files -f $CONTAINER_ENGINE-compose.postgres.yml"
-	fi
+
+	# Normalize and include optional overrides
+	shopt -s nocasematch
+	case "$enable_saml" in
+		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.saml.yml" ;;
+	esac
+	case "$use_internal_pg" in
+		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.postgres.yml" ;;
+	esac
+	shopt -u nocasematch
 
 	echo "$files"
 }
@@ -1066,7 +1077,7 @@ function deploy_stack() {
 			fi
 
 			# Build commands
-			COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
+			COMPOSE_OVERRIDE=$(build_compose_override "$USE_INTERNAL_PG")
 			CLEAN_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE down --remove-orphans\""
 			PS_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE ps -q\""
 			PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
@@ -1119,7 +1130,7 @@ EOF
 			cd "$CONTAINER_DIR"
 
 			# Build override flags once
-			COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
+			COMPOSE_OVERRIDE=$(build_compose_override "$USE_INTERNAL_PG")
 
 			# Decide compose up/ps commands (rootless, without sudo)
 			UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
@@ -1366,4 +1377,67 @@ function copy_required() {
 	ensure_dest_file_slot "$dest"
 	cp -f -- "$src" "$dest" || die "copy failed: $src -> $dest"
 	echo "Copied $(basename "$src") -> $dest"
+}
+
+function parse_major_minor() {
+	# Usage: parse_major_minor "4.48.9" -> echoes "4 48"
+	local v="$1" maj min
+	maj="$(awk -F. '{print $1+0}' <<<"$v" 2>/dev/null || echo 0)"
+	min="$(awk -F. '{print ($2==""?0:$2)+0}' <<<"$v" 2>/dev/null || echo 0)"
+	echo "$maj $min"
+}
+
+function version_ge_4_48() {
+	# returns 0 (true) if $1 >= 4.48
+	local v="$1" maj min
+	read -r maj min < <(parse_major_minor "$v")
+	if ((maj > 4)); then return 0; fi
+	if ((maj == 4 && min >= 48)); then return 0; fi
+	return 1
+}
+
+function version_lt_4_48() {
+	# returns 0 (true) if $1 < 4.48
+	local v="$1" maj min
+	read -r maj min < <(parse_major_minor "$v")
+	if ((maj < 4)); then return 0; fi
+	if ((maj == 4 && min < 48)); then return 0; fi
+	return 1
+}
+
+function saml_files_exist() {
+	# Legacy SAML files must be in COMPOSE_DIR
+	[[ -f "$COMPOSE_DIR/SAMLv2-config.groovy" ]] || [[ -f "$COMPOSE_DIR/idp.xml" ]] || [[ -f "$COMPOSE_DIR/iriusrisk-sp.jks" ]]
+}
+
+function fetch_health() {
+	# Prints: "<http_code> <json>"
+	local code json
+	code="$(curl -sk -w "%{http_code}" -o /tmp/irius_health.json https://localhost/health || true)"
+	json="$(cat /tmp/irius_health.json 2>/dev/null || true)"
+	printf '%s %s\n' "$code" "$json"
+}
+
+function extract_version_from_json() {
+	# Reads JSON from stdin and outputs .version if present
+	if command -v jq >/dev/null 2>&1; then
+		jq -r '.version // empty' 2>/dev/null
+	else
+		sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+	fi
+}
+
+function wait_for_health() {
+	# Wait up to 60 minutes (60 retries x 60s) for HTTP 200; args: retries delay
+	local retries="${1:-60}" delay="${2:-60}" i=0 code json
+	while ((i < retries)); do
+		read -r code json < <(fetch_health)
+		if [[ $code == "200" ]]; then
+			printf '%s' "$json" >/tmp/irius_health.json
+			return 0
+		fi
+		sleep "$delay"
+		i=$((i + 1))
+	done
+	return 1
 }

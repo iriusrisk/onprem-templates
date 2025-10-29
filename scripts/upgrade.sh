@@ -257,6 +257,7 @@ fi
 # 10. Rebuild local base images for podman (if applicable)
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	container_registry_login
 	build_podman_custom_images "$CHOSEN_VERSION"
 fi
 
@@ -264,7 +265,11 @@ fi
 # 11. Update the stack
 # —————————————————————————————————————————————————————————————
 echo "Cleaning up current stack and pulling latest images"
-container_registry_login
+
+if [[ $CONTAINER_ENGINE == "docker" ]]; then
+	container_registry_login
+fi
+
 $CONTAINER_ENGINE system prune -f
 cd "$COMPOSE_DIR"
 

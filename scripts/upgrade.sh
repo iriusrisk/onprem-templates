@@ -312,7 +312,7 @@ cd "$COMPOSE_DIR"
 $COMPOSE_TOOL $COMPOSE_OVERRIDE down
 
 # Force download latest images
-$COMPOSE_TOOL $COMPOSE_OVERRIDE pull
+$COMPOSE_TOOL $COMPOSE_OVERRIDE pull --ignore-pull-failures || true
 
 echo "Restarting stack to complete upgrade"
 
@@ -337,9 +337,61 @@ if wait_for_health 60 60; then
 	if [[ $TARGET_GE_4_48_POST == "y" && $LEGACY_SAML_PRESENT == "y" && $PREV_LT_4_48 == "y" ]]; then
 		echo "Upgrade to ≥4.48 confirmed healthy and prior was <4.48 → removing legacy SAML files."
 		rm -f "$COMPOSE_DIR/SAMLv2-config.groovy" "$COMPOSE_DIR/idp.xml" "$COMPOSE_DIR/iriusrisk-sp.jks" || true
+		# --- Remove SAML override from services/stack now that migration succeeded ---
+		echo "SAML migration complete. Updating services to exclude legacy SAML override..."
+		NO_SAML_OVERRIDE="$(build_compose_override "n" "$USE_INTERNAL_PG")"
+
+		case "$CONTAINER_ENGINE" in
+			docker)
+				if [[ -f /etc/systemd/system/iriusrisk-docker.service ]]; then
+					echo "Patching Docker systemd service to drop SAML override..."
+					# Remove any '-f docker-compose.saml.yml' segments from Exec lines
+					sudo sed -i -E 's/(Exec(Start|Stop)=.*)( -f docker-compose\.saml\.yml)/\1/g' /etc/systemd/system/iriusrisk-docker.service
+					sudo systemctl daemon-reload
+					sudo systemctl restart iriusrisk-docker.service
+					echo "Docker service restarted without SAML override."
+				else
+					echo "Docker service file not found; reconciling stack without SAML override via compose..."
+					$COMPOSE_TOOL $NO_SAML_OVERRIDE up -d
+				fi
+				;;
+			podman)
+				echo "Recreating Podman rootless stack without SAML override and refreshing user units..."
+				# Reconcile the stack without SAML override
+				$COMPOSE_TOOL $NO_SAML_OVERRIDE up -d
+
+				# Stop/disable any existing user units for this project
+				stop_disable_user_units_for_project "$CONTAINER_ENGINE" || true
+
+				# Discover compose project and regenerate per-container units
+				PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
+				UNIT_DIR="$HOME/.config/systemd/user"
+				mkdir -p "$UNIT_DIR"
+				mapfile -t containers < <(
+					podman ps -a --filter "label=io.podman.compose.project=${PROJECT_LABEL}" --format "{{.Names}}"
+				)
+				for cname in "${containers[@]}"; do
+					podman generate systemd --files --name "$cname" 2> >(grep -v "DEPRECATED command" >&2)
+					[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ || true
+				done
+
+				if ensure_user_systemd_ready "$(id -un)"; then
+					systemctl --user daemon-reload
+					for cname in "${containers[@]}"; do
+						svc="container-$cname.service"
+						[[ -f "$UNIT_DIR/$svc" ]] && systemctl --user enable --now "$svc" || true
+					done
+					echo "Podman user services updated without SAML override."
+				else
+					echo "WARNING: user systemd not reachable; units written to $UNIT_DIR and will activate on next login/reboot."
+				fi
+				;;
+		esac
 	fi
 else
 	echo "WARNING: IriusRisk did not become healthy within 60 minutes; legacy SAML files (if any) were NOT deleted."
+	echo "Starting rollback"
+	bash "$SCRIPT_PATH/rollback.sh"
 fi
 
 echo "Upgrade script completed."

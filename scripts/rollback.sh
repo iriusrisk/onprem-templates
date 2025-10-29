@@ -248,6 +248,16 @@ echo "Restarting stack to complete rollback"
 $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d
 
 echo
+echo "Waiting for IriusRisk to become healthy (up to 60 minutes) ..."
+if wait_for_health 60 60; then
+	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"
+	POST_VERSION="$(printf '%s' "$POST_JSON" | extract_version_from_json)"
+	echo "Rollback successful: IriusRisk is healthy. Detected version: ${POST_VERSION:-unknown}"
+else
+	die "IriusRisk did not become healthy within 60 minutes after rollback."
+fi
+
+echo
 echo "Rollback complete."
 echo " - Compose restored from: $COMPOSE_TAR"
 echo " - DB restored from:      $DB_DUMP"

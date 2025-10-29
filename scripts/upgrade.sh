@@ -324,6 +324,8 @@ echo "Stack restarted with latest images"
 # —————————————————————————————————————————————————————————————
 # 12. Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
 # —————————————————————————————————————————————————————————————
+echo
+echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
 POST_JSON=""
 if wait_for_health 60 60; then
 	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"

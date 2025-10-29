@@ -315,7 +315,7 @@ echo "Deploying new Compose stack from: $CONTAINER_DIR"
 deploy_stack
 
 echo
-echo "Waiting for IriusRisk to become healthy (up to 60 minutes) ..."
+echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
 if wait_for_health 60 60; then
 	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"
 	POST_VERSION="$(printf '%s' "$POST_JSON" | extract_version_from_json)"

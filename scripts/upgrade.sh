@@ -389,10 +389,20 @@ if wait_for_health 60 60; then
 				fi
 				;;
 		esac
+
+		echo "Waiting for IriusRisk to become healthy after removing SAML override..."
+		if wait_for_health 60 60; then
+			echo "Post-migration stack is healthy without SAML override."
+		else
+			echo "WARNING: Stack did not become healthy within 60 minutes after removing SAML override."
+			echo "Starting rollback."
+			bash "$SCRIPT_PATH/rollback.sh"
+		fi
+
 	fi
 else
 	echo "WARNING: IriusRisk did not become healthy within 60 minutes; legacy SAML files (if any) were NOT deleted."
-	echo "Starting rollback"
+	echo "Starting rollback."
 	bash "$SCRIPT_PATH/rollback.sh"
 fi
 

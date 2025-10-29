@@ -190,73 +190,33 @@ fi
 COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
 
 # —————————————————————————————————————————————————————————————
-# 7. Backup DB
+# 6. Backup DB
 # —————————————————————————————————————————————————————————————
 backup_db
 
 # —————————————————————————————————————————————————————————————
-# 7. Backup compose files referenced in COMPOSE_OVERRIDE
+# 7. Backup original compose files + certificates + SAML files (if any)
 # —————————————————————————————————————————————————————————————
+# Assumes: COMPOSE_DIR, BDIR, VERSION, TS set
 TMP_COMPOSE_TAR="/tmp/irius.compose.$TS.tar.gz"
 OUT_COMPOSE_TAR="$BDIR/irius.compose.$VERSION.tar.gz"
 
-echo "Backing up compose files referenced in COMPOSE_OVERRIDE from: $COMPOSE_DIR"
-# Parse -f arguments safely
-read -r -a _parts <<<"$COMPOSE_OVERRIDE"
+echo "Backing up contents of: $COMPOSE_DIR"
 
-compose_files=()
-i=0
-while [[ $i -lt ${#_parts[@]} ]]; do
-	if [[ ${_parts[i]} == "-f" && -n ${_parts[i + 1]:-} ]]; then
-		compose_files+=("${_parts[i + 1]}")
-		i=$((i + 2))
-	else
-		i=$((i + 1))
-	fi
-done
-
-# De-duplicate
-declare -A seen
-uniq_files=()
-for f in "${compose_files[@]}"; do
-	if [[ -n $f && -z ${seen[$f]:-} ]]; then
-		seen[$f]=1
-		uniq_files+=("$f")
-	fi
-done
-
-pushd "$COMPOSE_DIR" >/dev/null
-valid_files=()
-missing_files=()
-for f in "${uniq_files[@]}"; do
-	if [[ -f $f ]]; then
-		valid_files+=("$f")
-	elif [[ -f "./$f" ]]; then
-		valid_files+=("./$f")
-	elif [[ -f "$(basename "$f")" ]]; then
-		valid_files+=("$(basename "$f")")
-	elif [[ $f == /* && -f $f ]]; then
-		valid_files+=("$f")
-	else
-		missing_files+=("$f")
-	fi
-done
-
-if [[ ${#missing_files[@]} -gt 0 ]]; then
-	echo "WARNING: The following compose files were referenced but not found and won't be backed up:"
-	for m in "${missing_files[@]}"; do echo " - $m"; done
+if [[ ! -d $COMPOSE_DIR ]]; then
+	echo "ERROR: COMPOSE_DIR does not exist: $COMPOSE_DIR"
+	exit 1
 fi
 
-if [[ ${#valid_files[@]} -gt 0 ]]; then
-	tar -czf "$TMP_COMPOSE_TAR" "${valid_files[@]}"
-	rm -f "$BDIR"/irius.compose.*.tar.gz || true
-	mv -f "$TMP_COMPOSE_TAR" "$OUT_COMPOSE_TAR"
-	C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
-	echo "Compose files backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
-else
-	echo "WARNING: No valid compose files found to back up."
-fi
-popd >/dev/null
+# Create tar.gz, excluding the postgres directory if it exists
+tar -C "$COMPOSE_DIR" --exclude='./postgres' -czf "$TMP_COMPOSE_TAR" .
+
+# Replace any previous archives for this run
+rm -f "$BDIR"/irius.compose.*.tar.gz || true
+mv -f "$TMP_COMPOSE_TAR" "$OUT_COMPOSE_TAR"
+
+C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
+echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 
 # —————————————————————————————————————————————————————————————
 # 8. Update compose tomcat tag (docker) or note podman build

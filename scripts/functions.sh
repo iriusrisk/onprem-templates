@@ -1061,6 +1061,97 @@ function update_component_tag() {
 	fi
 }
 
+# Regenerate and (re)enable rootless Podman user units for a compose project.
+# Args:
+#   $1 = compose project label (if empty, we auto-discover from running containers)
+# Behavior:
+#   - Generates user systemd units via `podman generate systemd --files --name`
+#   - Hardens units for rootless runtime (%t) and mkdirs via ExecStartPre
+#   - Ensures nginx waits for tomcat across reboots (After/Requires)
+#   - Ensures interactive shells inherit per-boot runtime dir (XDG_RUNTIME_DIR/TMPDIR)
+#   - Enables units (does not start them; stack is already running via compose)
+function podman_regenerate_user_units_for_project() {
+	local PROJECT_LABEL="$1"
+
+	# Discover project if not provided
+	if [[ -z $PROJECT_LABEL ]]; then
+		PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
+	fi
+	if [[ -z $PROJECT_LABEL ]]; then
+		echo "ERROR: Could not determine compose project label." >&2
+		return 1
+	fi
+
+	# Collect container names for the project
+	mapfile -t containers < <(
+		podman ps -a --filter "label=io.podman.compose.project=${PROJECT_LABEL}" --format "{{.Names}}"
+	)
+	if [[ ${#containers[@]} -eq 0 ]]; then
+		echo "No containers found for project '${PROJECT_LABEL}'."
+		return 0
+	fi
+
+	# Generate unit files
+	local UNIT_DIR="$HOME/.config/systemd/user"
+	mkdir -p "$UNIT_DIR"
+	local generated_any=0
+	for cname in "${containers[@]}"; do
+		podman generate systemd --files --name "$cname" \
+			2> >(grep -v "DEPRECATED command" >&2)
+		[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ && generated_any=1
+	done
+	[[ $generated_any -eq 0 ]] && echo "No unit files generated under $UNIT_DIR (project=${PROJECT_LABEL})."
+
+	# Harden generated user units for rootless Podman/runtime dir
+	for cname in "${containers[@]}"; do
+		local svc="$UNIT_DIR/container-$cname.service"
+		[[ -f $svc ]] || continue
+		grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" ||
+			sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
+		grep -q '^Environment=TMPDIR=%t' "$svc" ||
+			sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
+		grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" ||
+			sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
+	done
+
+	# Ensure nginx waits for tomcat (order + requirement across reboots)
+	local nginx_svc="$UNIT_DIR/container-iriusrisk-nginx.service"
+	if [[ -f $nginx_svc ]]; then
+		grep -q '^After=container-iriusrisk-tomcat.service' "$nginx_svc" ||
+			sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$nginx_svc"
+		grep -q '^Requires=container-iriusrisk-tomcat.service' "$nginx_svc" ||
+			sed -i '/^\[Unit\]/a Requires=container-iriusrisk-tomcat.service' "$nginx_svc"
+	fi
+
+	# Ensure Podman uses per-boot runtime dir in interactive shells
+	if ! grep -q 'XDG_RUNTIME_DIR=.*run/user' ~/.bash_profile 2>/dev/null; then
+		cat <<'EOF' >>~/.bash_profile
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export TMPDIR="${TMPDIR:-$XDG_RUNTIME_DIR}"
+EOF
+	fi
+
+	# Enable units (do not start; compose already started containers)
+	if ! ensure_user_systemd_ready "$(id -un)"; then
+		echo "WARNING: user systemd not reachable; units placed in $UNIT_DIR."
+		echo "They will start on next login/reboot (linger enabled). To enable later:"
+		echo "  ensure_user_systemd_ready \"$(id -un)\" && systemctl --user enable container-*.service"
+		return 0
+	else
+		systemctl --user daemon-reload
+		for cname in "${containers[@]}"; do
+			local svc="container-$cname.service"
+			if [[ -f "$UNIT_DIR/$svc" ]]; then
+				systemctl --user enable "$svc" || echo "WARNING: failed to enable $svc"
+			else
+				echo "WARNING: unit file missing: $UNIT_DIR/$svc"
+			fi
+		done
+	fi
+
+	echo "Podman rootless systemd user services (re)generated and enabled."
+}
+
 function deploy_stack() {
 	container_registry_login
 
@@ -1152,84 +1243,8 @@ EOF
 			# --- Bring up containers (rootless) ---
 			eval "$UP_CMD"
 
-			# Discover compose project label
-			PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
-			if [[ -z $PROJECT_LABEL ]]; then
-				PROJECT_LABEL="$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')"
-			fi
-
-			# Collect ALL containers in the project (running or not)
-			mapfile -t containers < <(
-				podman ps -a \
-					--filter "label=io.podman.compose.project=${PROJECT_LABEL}" \
-					--format "{{.Names}}"
-			)
-
-			# Bail out only if literally no containers exist for the project
-			if [[ ${#containers[@]} -eq 0 ]]; then
-				echo "No containers found for project '${PROJECT_LABEL}'."
-				echo "Tip: check 'podman-compose $COMPOSE_OVERRIDE ps -a' output."
-				exit 0
-			fi
-
-			echo "Generating user systemd unit files..."
-			UNIT_DIR="$HOME/.config/systemd/user"
-			mkdir -p "$UNIT_DIR"
-			generated_any=0
-			for cname in "${containers[@]}"; do
-				podman generate systemd --files --name "$cname" \
-					2> >(grep -v "DEPRECATED command" >&2)
-				[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ && generated_any=1
-			done
-			[[ $generated_any -eq 0 ]] && echo "No unit files generated; check project label: ${PROJECT_LABEL}"
-
-			# Harden generated user units for rootless Podman/runtime dir
-			for cname in "${containers[@]}"; do
-				svc="$UNIT_DIR/container-$cname.service"
-				[[ -f $svc ]] || continue
-				grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" ||
-					sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
-				grep -q '^Environment=TMPDIR=%t' "$svc" ||
-					sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
-				grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" ||
-					sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
-			done
-
-			# Ensure nginx waits for tomcat (order + requirement across reboots)
-			svc="$UNIT_DIR/container-iriusrisk-nginx.service"
-			if [[ -f $svc ]]; then
-				grep -q '^After=container-iriusrisk-tomcat.service' "$svc" ||
-					sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
-				grep -q '^Requires=container-iriusrisk-tomcat.service' "$svc" ||
-					sed -i '/^\[Unit\]/a Requires=container-iriusrisk-tomcat.service' "$svc"
-			fi
-
-			# Ensure Podman uses per-boot runtime dir in interactive shells
-			if ! grep -q 'XDG_RUNTIME_DIR=.*run/user' ~/.bash_profile 2>/dev/null; then
-				cat <<'EOF' >>~/.bash_profile
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export TMPDIR="${TMPDIR:-$XDG_RUNTIME_DIR}"
-EOF
-			fi
-
-			# Make sure we can talk to user systemd in this run (no start now; just enable)
-			if ! ensure_user_systemd_ready "$(id -un)"; then
-				echo "WARNING: user systemd not reachable; units placed in $UNIT_DIR."
-				echo "They will start on next login/reboot (linger enabled). To enable manually later:"
-				echo "  ensure_user_systemd_ready \"$(id -un)\" && systemctl --user enable container-*.service"
-			else
-				systemctl --user daemon-reload
-
-				for cname in "${containers[@]}"; do
-					svc="container-$cname.service"
-					if [[ -f "$UNIT_DIR/$svc" ]]; then
-						systemctl --user enable "$svc" || echo "WARNING: failed to enable $svc"
-					else
-						echo "WARNING: unit file missing: $UNIT_DIR/$svc"
-					fi
-				done
-			fi
-			echo "Podman rootless systemd user services created and enabled."
+			# (Re)generate + enable user systemd units for the project
+			podman_regenerate_user_units_for_project
 			;;
 		*)
 			echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2

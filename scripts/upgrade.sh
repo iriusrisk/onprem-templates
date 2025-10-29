@@ -327,18 +327,22 @@ echo "Stack restarted with latest images"
 echo
 echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
 POST_JSON=""
+
 if wait_for_health 60 60; then
 	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"
 	POST_VERSION="$(printf '%s' "$POST_JSON" | extract_version_from_json)"
 	echo "Post-upgrade IriusRisk is healthy. Detected version: ${POST_VERSION:-unknown}"
 
 	TARGET_GE_4_48_POST="n"
-	if [[ -n $POST_VERSION ]] && version_ge_4_48 "$POST_VERSION"; then TARGET_GE_4_48_POST="y"; fi
+	if [[ -n $POST_VERSION ]] && version_ge_4_48 "$POST_VERSION"; then
+		TARGET_GE_4_48_POST="y"
+	fi
 
 	# If we crossed <4.48 → ≥4.48 and used legacy SAML for migration, delete legacy files now.
 	if [[ $TARGET_GE_4_48_POST == "y" && $LEGACY_SAML_PRESENT == "y" && $PREV_LT_4_48 == "y" ]]; then
 		echo "Upgrade to ≥4.48 confirmed healthy and prior was <4.48 → removing legacy SAML files."
 		rm -f "$COMPOSE_DIR/SAMLv2-config.groovy" "$COMPOSE_DIR/idp.xml" "$COMPOSE_DIR/iriusrisk-sp.jks" || true
+
 		# --- Remove SAML override from services/stack now that migration succeeded ---
 		echo "SAML migration complete. Updating services to exclude legacy SAML override..."
 		NO_SAML_OVERRIDE="$(build_compose_override "n" "$USE_INTERNAL_PG")"
@@ -362,31 +366,10 @@ if wait_for_health 60 60; then
 				# Reconcile the stack without SAML override
 				$COMPOSE_TOOL $NO_SAML_OVERRIDE up -d
 
-				# Stop/disable any existing user units for this project
-				stop_disable_user_units_for_project "$CONTAINER_ENGINE" || true
-
-				# Discover compose project and regenerate per-container units
+				# Refresh user units to match the new compose flags
 				PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
-				UNIT_DIR="$HOME/.config/systemd/user"
-				mkdir -p "$UNIT_DIR"
-				mapfile -t containers < <(
-					podman ps -a --filter "label=io.podman.compose.project=${PROJECT_LABEL}" --format "{{.Names}}"
-				)
-				for cname in "${containers[@]}"; do
-					podman generate systemd --files --name "$cname" 2> >(grep -v "DEPRECATED command" >&2)
-					[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ || true
-				done
-
-				if ensure_user_systemd_ready "$(id -un)"; then
-					systemctl --user daemon-reload
-					for cname in "${containers[@]}"; do
-						svc="container-$cname.service"
-						[[ -f "$UNIT_DIR/$svc" ]] && systemctl --user enable --now "$svc" || true
-					done
-					echo "Podman user services updated without SAML override."
-				else
-					echo "WARNING: user systemd not reachable; units written to $UNIT_DIR and will activate on next login/reboot."
-				fi
+				stop_disable_user_units_for_project "$PROJECT_LABEL" || true
+				podman_regenerate_user_units_for_project "$PROJECT_LABEL"
 				;;
 		esac
 
@@ -395,11 +378,11 @@ if wait_for_health 60 60; then
 			echo "Post-migration stack is healthy without SAML override."
 		else
 			echo "WARNING: Stack did not become healthy within 60 minutes after removing SAML override."
-			echo "Starting rollback."
+			echo "Starting rollback..."
 			bash "$SCRIPT_PATH/rollback.sh"
 		fi
-
 	fi
+
 else
 	echo "WARNING: IriusRisk did not become healthy within 60 minutes; legacy SAML files (if any) were NOT deleted."
 	echo "Starting rollback."

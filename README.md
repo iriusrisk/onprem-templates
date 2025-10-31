@@ -145,23 +145,26 @@ You can control the IriusRisk stack directly through `systemctl`.
 
 **Podman (rootless):**
 ```bash
-# Stop stack
-systemctl --user stop --all 'container-*.service'
-
 # Start stack
-systemctl --user start --all 'container-*.service'
+systemctl --user start iriusrisk-docker
+
+# Stop stack
+systemctl --user stop iriusrisk-docker
+
+# Restart stack
+systemctl --user restart iriusrisk-docker
 ```
 
 **Docker:**
 ```bash
 # Start stack
-systemctl start iriusrisk-docker
+sudo systemctl start iriusrisk-docker
 
 # Stop stack
-systemctl stop iriusrisk-docker
+sudo systemctl stop iriusrisk-docker
 
 # Restart stack
-systemctl restart iriusrisk-docker
+sudo systemctl restart iriusrisk-docker
 ```
 
 

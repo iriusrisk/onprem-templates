@@ -1050,6 +1050,11 @@ deploy_stack() {
 		fi
 	fi
 
+	if [[ $ENGINE == "podman" ]]; then
+		# Build custom images for Podman
+		build_podman_custom_images
+	fi
+
 	# Unit dir
 	if [[ $UNIT_SCOPE == "user" ]]; then
 		mkdir -p "$UNIT_DIR"

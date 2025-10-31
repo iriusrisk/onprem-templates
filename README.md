@@ -150,9 +150,6 @@ systemctl --user stop --all 'container-*.service'
 
 # Start stack
 systemctl --user start --all 'container-*.service'
-
-# Restart stack
-systemctl --user restart --all 'container-*.service'
 ```
 
 **Docker:**

@@ -335,7 +335,7 @@ if wait_for_health 60 60; then
 			echo "Patching ${CONTAINER_ENGINE^} service to drop SAML override..."
 			# Remove any '-f <...>/docker-compose.saml.yml' from ExecStart/ExecStop lines
 			$SED_CMD -i -E \
-				's/^(Exec(Start|Stop)=.*)[[:space:]]+-f[[:space:]]+[^[:space:]]*docker-compose\.saml\.yml/\1/g' \
+				"s/^(Exec(Start|Stop)=.*)[[:space:]]+-f[[:space:]]+[^[:space:]]*${CONTAINER_ENGINE}-compose\.saml\.yml/\1/g" \
 				"$UNIT_PATH"
 
 			$SYSTEMCTL_CMD daemon-reload

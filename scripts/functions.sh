@@ -622,7 +622,7 @@ function build_compose_override() {
 # Usage: build_podman_custom_images "<tomcat_version_or_empty>"
 function build_podman_custom_images() {
 	local tv="$1"
-	[[ -z $tv ]] && tv="4" # default if not provided
+	[[ -z $tv ]] && tv="4.47.21" # default if not provided
 
 	echo "Preparing custom images for version: tomcat-${tv}"
 

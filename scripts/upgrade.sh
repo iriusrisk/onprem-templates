@@ -277,7 +277,7 @@ cd "$COMPOSE_DIR"
 $COMPOSE_TOOL $COMPOSE_OVERRIDE down
 
 # Force download latest images
-$COMPOSE_TOOL $COMPOSE_OVERRIDE pull --ignore-pull-failures || true
+$COMPOSE_TOOL $COMPOSE_OVERRIDE pull
 
 echo "Restarting stack to complete upgrade"
 
@@ -314,29 +314,38 @@ if wait_for_health 60 60; then
 
 		case "$CONTAINER_ENGINE" in
 			docker)
-				if [[ -f /etc/systemd/system/iriusrisk-docker.service ]]; then
-					echo "Patching Docker systemd service to drop SAML override..."
-					# Remove any '-f docker-compose.saml.yml' segments from Exec lines
-					sudo sed -i -E 's/(Exec(Start|Stop)=.*)( -f docker-compose\.saml\.yml)/\1/g' /etc/systemd/system/iriusrisk-docker.service
-					sudo systemctl daemon-reload
-					sudo systemctl restart iriusrisk-docker.service
-					echo "Docker service restarted without SAML override."
-				else
-					echo "Docker service file not found; reconciling stack without SAML override via compose..."
-					$COMPOSE_TOOL $NO_SAML_OVERRIDE up -d
-				fi
+				UNIT_PATH="/etc/systemd/system/iriusrisk-docker.service"
+				SYSTEMCTL_CMD="sudo systemctl"
+				SED_CMD="sudo sed"
 				;;
 			podman)
-				echo "Recreating Podman rootless stack without SAML override and refreshing user units..."
-				# Reconcile the stack without SAML override
-				$COMPOSE_TOOL $NO_SAML_OVERRIDE up -d
-
-				# Refresh user units to match the new compose flags
-				PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
-				stop_disable_user_units_for_project "$PROJECT_LABEL" || true
-				podman_regenerate_user_units_for_project "$PROJECT_LABEL"
+				UNIT_PATH="$HOME/.config/systemd/user/iriusrisk-podman.service"
+				SYSTEMCTL_CMD="systemctl --user"
+				SED_CMD="sed"
+				;;
+			*)
+				echo "ERROR: Unsupported CONTAINER_ENGINE=$CONTAINER_ENGINE" >&2
+				exit 1
 				;;
 		esac
+
+		SERVICE_NAME="iriusrisk-$CONTAINER_ENGINE.service"
+
+		if [[ -f $UNIT_PATH ]]; then
+			echo "Patching ${CONTAINER_ENGINE^} service to drop SAML override..."
+			# Remove any '-f <...>/docker-compose.saml.yml' from ExecStart/ExecStop lines
+			$SED_CMD -i -E \
+				's/^(Exec(Start|Stop)=.*)[[:space:]]+-f[[:space:]]+[^[:space:]]*docker-compose\.saml\.yml/\1/g' \
+				"$UNIT_PATH"
+
+			$SYSTEMCTL_CMD daemon-reload
+			$SYSTEMCTL_CMD restart "$SERVICE_NAME"
+			echo "${CONTAINER_ENGINE^} service restarted without SAML override."
+		else
+			echo "Service file not found; reconciling stack without SAML override via compose..."
+			# Falls back to compose (expects $COMPOSE_TOOL and $NO_SAML_OVERRIDE set by caller)
+			$COMPOSE_TOOL $NO_SAML_OVERRIDE up -d
+		fi
 
 		echo "Waiting for IriusRisk to become healthy after removing SAML override..."
 		if wait_for_health 60 60; then

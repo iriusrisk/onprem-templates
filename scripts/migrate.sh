@@ -72,7 +72,23 @@ echo "Legacy compose: $LEGACY_COMPOSE_FILE"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 3. Backups — reuse shared helper (sets TS, VERSION, BDIR, OUT_DB)
+# 3. Pre-migration health/version check (best-effort)
+#    Saves current version to /tmp/iriusrisk_previous_version.txt
+# —————————————————————————————————————————————————————————————
+PREV_VERSION="unknown"
+# Helper functions come from functions.sh:
+#   fetch_health_once  -> prints "<http_code> <json>"
+#   extract_version_from_json (reads JSON from stdin; echoes .version)
+read -r pre_code pre_json < <(fetch_health_once)
+if [[ $pre_code == "200" && -n $pre_json ]]; then
+	PREV_VERSION="$(printf '%s' "$pre_json" | extract_version_from_json)"
+fi
+printf '%s\n' "$PREV_VERSION" >/tmp/iriusrisk_previous_version.txt || true
+echo "Detected current IriusRisk version (pre-migration): $PREV_VERSION"
+echo
+
+# —————————————————————————————————————————————————————————————
+# 4. Backups — reuse shared helper (sets TS, VERSION, BDIR, OUT_DB)
 # —————————————————————————————————————————————————————————————
 backup_db
 
@@ -89,7 +105,7 @@ echo "Compose backup saved to: $OUT_COMPOSE_TAR"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 4. Parse legacy compose for required values (yq if present; awk fallback)
+# 5. Parse legacy compose for required values (yq if present; awk fallback)
 # —————————————————————————————————————————————————————————————
 FILE="$LEGACY_COMPOSE_FILE"
 have_yq=0
@@ -199,7 +215,7 @@ fi
 echo
 
 # ------------------------------------------------------------
-# 5. Copy certs + SAML files from legacy into the new engine dir
+# 6. Copy certs + SAML files from legacy into the new engine dir
 # ------------------------------------------------------------
 CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 
@@ -240,7 +256,7 @@ fi
 echo "Copy step completed."
 
 # —————————————————————————————————————————————————————————————
-# 6. Update automation compose overrides with extracted values
+# 7. Update automation compose overrides with extracted values
 # —————————————————————————————————————————————————————————————
 OVR="$CONTAINER_DIR/$CONTAINER_ENGINE-compose.override.yml"
 SAML_OVR="$CONTAINER_DIR/$CONTAINER_ENGINE-compose.saml.yml"
@@ -285,7 +301,8 @@ if [[ $ENABLE_SAML_ONCLICK == "y" && -f $SAML_OVR ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Switch over: stop legacy stack, start new stack, create systemd service
+# 8. Switch over: stop legacy stack, start new stack, create systemd service
+#    Then perform post-migration health wait (≤ 60 minutes)
 # —————————————————————————————————————————————————————————————
 
 echo "Switching stacks ..."
@@ -294,6 +311,17 @@ cd "$LEGACY_DIR"
 $COMPOSE_TOOL -f $LEGACY_COMPOSE_FILE down --remove-orphans
 
 echo
-echo "Deploying new Docker Compose stack from: $CONTAINER_DIR"
-
+echo "Deploying new Compose stack from: $CONTAINER_DIR"
 deploy_stack
+
+echo
+echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
+if wait_for_health 60 60; then
+	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"
+	POST_VERSION="$(printf '%s' "$POST_JSON" | extract_version_from_json)"
+	echo "Migration successful: IriusRisk is healthy. Detected version: ${POST_VERSION:-unknown}"
+else
+	die "IriusRisk did not become healthy within 60 minutes after migration."
+fi
+
+echo "Migration script completed."

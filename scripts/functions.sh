@@ -306,11 +306,12 @@ EOF
 
 		# --- Graceful down then hard teardown for a clean slate ---
 		# Bring down anything that may be up for this project (best effort)
-		podman-compose -f "$(basename "$postgres_file")" down --remove-orphans || true
+		$compose_tool -f "$(basename "$postgres_file")" down --remove-orphans || true
 
-		# Stop user units (rootless) and forcefully clean up the project
-		stop_disable_user_units_for_project "$CONTAINER_ENGINE"
-		teardown_rootless_project "$CONTAINER_ENGINE"
+		# Force-remove any leftover postgres container(s) by name
+		ids="$(podman ps -aq --filter name=iriusrisk-postgres)"
+		if [[ -n $ids ]]; then podman rm -f $ids || true; fi
+
 		sudo rm -rf ./postgres/data
 
 		# Bring up just Postgres (with secrets override)
@@ -591,17 +592,28 @@ function check_file() {
 }
 
 function build_compose_override() {
-	local enable_saml="$1"
-	local use_internal_pg="$2"
+	local enable_saml use_internal_pg
+	enable_saml="${1:-}"
+	use_internal_pg="${2:-}"
+
 	local base_files="-f $CONTAINER_ENGINE-compose.yml -f $CONTAINER_ENGINE-compose.override.yml"
 	local files="$base_files"
 
-	if [[ ${enable_saml,,} == "y" ]]; then
-		files="$files -f $CONTAINER_ENGINE-compose.saml.yml"
+	# If only one arg is provided, interpret it as the Postgres flag (back-compat)
+	if [[ -z $use_internal_pg && -n $enable_saml ]]; then
+		use_internal_pg="$enable_saml"
+		enable_saml=""
 	fi
-	if [[ ${use_internal_pg,,} == "y" ]]; then
-		files="$files -f $CONTAINER_ENGINE-compose.postgres.yml"
-	fi
+
+	# Normalize and include optional overrides
+	shopt -s nocasematch
+	case "$enable_saml" in
+		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.saml.yml" ;;
+	esac
+	case "$use_internal_pg" in
+		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.postgres.yml" ;;
+	esac
+	shopt -u nocasematch
 
 	echo "$files"
 }
@@ -692,54 +704,6 @@ EOF
 	podman rm -f temp-tomcat >/dev/null || true
 
 	echo "Custom images ready: localhost/nginx-rhel, localhost/tomcat-rhel"
-}
-
-function stop_disable_user_units_for_project() {
-	local proj="$1"
-
-	# Derive container names for the compose project, then map to user unit names
-	mapfile -t _units < <(
-		podman ps -a --filter "label=io.podman.compose.project=${proj}" --format '{{.Names}}' |
-			awk '{print "container-" $1 ".service"}'
-	)
-
-	for u in "${_units[@]}"; do
-		# Best-effort; units may or may not exist yet
-		systemctl --user stop "$u" 2>/dev/null || true
-		systemctl --user disable "$u" 2>/dev/null || true
-		systemctl --user reset-failed "$u" 2>/dev/null || true
-	done
-}
-
-# Teardown lingering resources for the project (rootless), including networks
-function teardown_rootless_project() {
-	local project="$1"
-
-	# Remove pods (and their infra containers)
-	mapfile -t pods < <(podman pod ps -q --filter "label=io.podman.compose.project=${project}")
-	if ((${#pods[@]})); then
-		podman pod rm -f "${pods[@]}" 2>/dev/null || true
-	fi
-
-	# Remove any leftover containers for the project
-	mapfile -t ctrs < <(podman ps -aq --filter "label=io.podman.compose.project=${project}")
-	if ((${#ctrs[@]})); then
-		podman rm -f "${ctrs[@]}" 2>/dev/null || true
-	fi
-
-	# Now handle project networks: detach any stragglers then rm -f
-	mapfile -t nets < <(
-		podman network ls --format '{{.Name}} {{.Labels}}' |
-			awk -v p="io.podman.compose.project=${project}" '$0 ~ p {print $1}'
-	)
-	for net in "${nets[@]}"; do
-		# If anything (even unlabeled) is still attached, remove it first
-		mapfile -t onnet < <(podman ps -aq --filter "network=${net}")
-		if ((${#onnet[@]})); then
-			podman rm -f "${onnet[@]}" 2>/dev/null || true
-		fi
-		podman network rm -f "$net" 2>/dev/null || true
-	done
 }
 
 # Rootless Podman prerequisites + per-boot runtime hardening
@@ -943,40 +907,6 @@ function resolve_rootless_user() {
 	echo "$u"
 }
 
-# Ensure a user systemd instance is running and accessible from this shell
-function ensure_user_systemd_ready() {
-	local user="${1:-$(id -un)}"
-	local uid="$(id -u "$user")"
-
-	# Ensure linger + start user manager (requires sudo once)
-	if command -v loginctl >/dev/null 2>&1; then
-		if ! loginctl show-user "$user" 2>/dev/null | grep -q '^Linger=yes'; then
-			echo "Enabling linger for $user (requires sudo)..."
-			sudo loginctl enable-linger "$user" || true
-		fi
-		sudo loginctl start-user "$user" 2>/dev/null || true
-	fi
-
-	# Ensure runtime env for systemctl --user
-	export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
-	export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
-
-	# Wait briefly for user manager + D-Bus socket to appear
-	# We check both the systemd control socket and the session bus.
-	for _ in {1..30}; do
-		if [[ -S "$XDG_RUNTIME_DIR/systemd/private" && -S "$XDG_RUNTIME_DIR/bus" ]]; then
-			break
-		fi
-		sleep 0.2
-	done
-
-	# Re-exec (or at least reload) the user manager so it sees any new units
-	systemctl --user daemon-reexec 2>/dev/null || systemctl --user daemon-reload 2>/dev/null || true
-
-	# Return success if we can talk to it now
-	systemctl --user show-environment >/dev/null 2>&1
-}
-
 function encrypt_and_store_secret() {
 	local secret_value="$1"
 	local secret_name="$2"
@@ -1050,181 +980,140 @@ function update_component_tag() {
 	fi
 }
 
-function deploy_stack() {
-	container_registry_login
+########################################
+# Container-agnostic compose + systemd
+# - Docker: system unit in /etc/systemd/system
+# - Podman: user unit in ~/.config/systemd/user (rootless, linger enabled)
+########################################
 
-	case "$CONTAINER_ENGINE" in
+function detect_engine_ctx() {
+	ENGINE="${CONTAINER_ENGINE:-docker}"
+	SERVICE_NAME="iriusrisk-$CONTAINER_ENGINE.service"
+	NEED_DOCKER_CFG=""
+
+	case "$ENGINE" in
 		docker)
-			echo
-			echo "Deploying with Docker Compose..."
+			COMPOSE_INVOKE="docker-compose"
+			COMPOSE_RUN='sg docker -c'
+			UNIT_SCOPE="system"
+			UNIT_DIR="/etc/systemd/system"
+			SYSTEMCTL="sudo systemctl"
+			UNIT_AFTER=$'After=network.target docker.service'
+			UNIT_REQUIRES=$'Requires=docker.service'
+			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'
+			NEED_DOCKER_CFG="true"
+			;;
+		podman)
+			COMPOSE_INVOKE="podman-compose"
+			COMPOSE_RUN="" # no wrapper for podman
+			UNIT_SCOPE="user"
+			UNIT_DIR="$HOME/.config/systemd/user"
+			SYSTEMCTL="systemctl --user"
+			UNIT_AFTER=$'After=network-online.target\nWants=network-online.target'
+			UNIT_REQUIRES=""
+			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'
+			;;
+		*)
+			echo "Unknown engine '$ENGINE'." >&2
+			exit 1
+			;;
+	esac
+}
 
-			DOCKER_COMPOSE_PATH="$(which docker-compose 2>/dev/null)"
-			cd "$CONTAINER_DIR"
+deploy_stack() {
+	container_registry_login
+	echo
+	echo "Deploying with $CONTAINER_ENGINE"
 
-			if [[ -z $DOCKER_USER ]]; then
-				DOCKER_USER="$USER"
-			fi
+	cd "$CONTAINER_DIR"
 
-			# Build commands
-			COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
-			CLEAN_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE down --remove-orphans\""
-			PS_CMD="sg docker -c \"docker-compose $COMPOSE_OVERRIDE ps -q\""
-			PS_OUTPUT=$(sg docker -c "cd $(pwd) && $PS_CMD")
+	detect_engine_ctx
+	ENABLE_SAML_ONCLICK=${ENABLE_SAML_ONCLICK:-n}
+	COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
 
-			if [[ -n $PS_OUTPUT ]]; then
-				echo "Cleaning up existing containers for this project..."
-				sg docker -c "cd $(pwd) && $CLEAN_CMD"
-				# Force-remove any leftover containers by their container_name
-				for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
-					sg docker -c "docker rm -f $svc 2>/dev/null || true"
-				done
-			fi
+	# Clean current stack
+	if [[ -n $COMPOSE_RUN ]]; then
+		PS_OUTPUT="$(eval "$COMPOSE_RUN \"cd $CONTAINER_DIR && $COMPOSE_INVOKE $COMPOSE_OVERRIDE ps -q\"")"
+	else
+		PS_OUTPUT="$(cd "$CONTAINER_DIR" && $COMPOSE_INVOKE $COMPOSE_OVERRIDE ps -q)"
+	fi
 
-			# Dynamically write systemd unit file
-			SERVICE_NAME="iriusrisk-docker.service"
+	if [[ -n $PS_OUTPUT ]]; then
+		echo "Cleaning up existing containers for this project..."
+		if [[ -n $COMPOSE_RUN ]]; then
+			eval "$COMPOSE_RUN \"cd $CONTAINER_DIR && $COMPOSE_INVOKE $COMPOSE_OVERRIDE down --remove-orphans\"" || true
+			for svc in iriusrisk-nginx iriusrisk-tomcat iriusrisk-startleft reporting-module iriusrisk-postgres; do
+				eval "$COMPOSE_RUN \"docker rm -f $svc 2>/dev/null || true\""
+			done
+		else
+			(cd "$CONTAINER_DIR" && $COMPOSE_INVOKE $COMPOSE_OVERRIDE down --remove-orphans) || true
+		fi
+	fi
 
-			cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME
+	if [[ $ENGINE == "podman" ]]; then
+		# Build custom images for Podman
+		build_podman_custom_images
+	fi
+
+	# Unit dir
+	if [[ $UNIT_SCOPE == "user" ]]; then
+		mkdir -p "$UNIT_DIR"
+	fi
+
+	# Unit contents
+	UNIT_PATH="$UNIT_DIR/$SERVICE_NAME"
+	if [[ $UNIT_SCOPE == "system" ]]; then
+		sudo tee "$UNIT_PATH" >/dev/null <<EOF
 [Unit]
-Description=IriusRisk Docker Compose Stack
-After=network.target docker.service
-Requires=docker.service
+Description=IriusRisk ${ENGINE^} Compose Stack
+$UNIT_AFTER
+$UNIT_REQUIRES
 
 [Service]
 Type=oneshot
 RemainAfterExit=true
 WorkingDirectory=$CONTAINER_DIR
-Environment=DOCKER_CONFIG=/etc/docker
-Environment=COMPOSE_INTERACTIVE_NO_CLI=1
-ExecStart=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE up -d"
-ExecStop=/usr/bin/sg docker -c "$DOCKER_COMPOSE_PATH $COMPOSE_OVERRIDE down"
+$UNIT_ENV_LINES
+ExecStart=/usr/bin/env bash -lc '$COMPOSE_INVOKE $COMPOSE_OVERRIDE up -d'
+ExecStop=/usr/bin/env bash -lc '$COMPOSE_INVOKE $COMPOSE_OVERRIDE down'
 
 [Install]
 WantedBy=multi-user.target
 EOF
+	else
+		tee "$UNIT_PATH" >/dev/null <<EOF
+[Unit]
+Description=IriusRisk ${ENGINE^} Compose Stack
+$UNIT_AFTER
+$UNIT_REQUIRES
 
-			# Ensure docker login works for service
-			sudo mkdir -p /etc/docker
-			sudo cp ~/.docker/config.json /etc/docker/config.json
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=$CONTAINER_DIR
+$UNIT_ENV_LINES
+ExecStart=/usr/bin/env bash -lc '$COMPOSE_INVOKE $COMPOSE_OVERRIDE up -d'
+ExecStop=/usr/bin/env bash -lc '$COMPOSE_INVOKE $COMPOSE_OVERRIDE down'
+
+[Install]
+WantedBy=default.target
+EOF
+	fi
+
+	# Docker: make registry login available
+	if [[ $NEED_DOCKER_CFG == "true" ]]; then
+		sudo mkdir -p /etc/docker
+		if [[ -f "$HOME/.docker/config.json" ]]; then
+			sudo cp "$HOME/.docker/config.json" /etc/docker/config.json
 			sudo chmod 600 /etc/docker/config.json
 			sudo chown root:root /etc/docker/config.json
+		fi
+	fi
 
-			# Start service
-			sudo systemctl daemon-reload
-			sudo systemctl enable $SERVICE_NAME
-			sudo systemctl restart $SERVICE_NAME
-			;;
-		podman)
-			echo
-			echo "Deploying with Podman Compose (rootless)..."
-			cd "$CONTAINER_DIR"
-
-			# Build override flags once
-			COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
-
-			# Decide compose up/ps commands (rootless, without sudo)
-			UP_CMD="podman-compose $COMPOSE_OVERRIDE up -d"
-			PS_CMD="podman-compose $COMPOSE_OVERRIDE ps -q"
-			DOWN_CMD="podman-compose $COMPOSE_OVERRIDE down --remove-orphans"
-
-			# --- Clean up any existing stack for this project (rootless) ---
-			if [ "$($PS_CMD 2>/dev/null)" ]; then
-				echo "Cleaning up existing containers for this project..."
-				# Stop compose and make sure nothing lingers
-				$DOWN_CMD || true
-				stop_disable_user_units_for_project "$CONTAINER_ENGINE"
-				teardown_rootless_project "$CONTAINER_ENGINE"
-			fi
-
-			# Build the custom rootless nginx and tomcat images
-			build_podman_custom_images
-
-			# --- Bring up containers (rootless) ---
-			eval "$UP_CMD"
-
-			# Discover compose project label
-			PROJECT_LABEL="$(podman ps -a --format '{{ index .Labels "io.podman.compose.project" }}' | head -n1)"
-			if [[ -z $PROJECT_LABEL ]]; then
-				PROJECT_LABEL="$(basename "$PWD" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g')"
-			fi
-
-			# Collect ALL containers in the project (running or not)
-			mapfile -t containers < <(
-				podman ps -a \
-					--filter "label=io.podman.compose.project=${PROJECT_LABEL}" \
-					--format "{{.Names}}"
-			)
-
-			# Bail out only if literally no containers exist for the project
-			if [[ ${#containers[@]} -eq 0 ]]; then
-				echo "No containers found for project '${PROJECT_LABEL}'."
-				echo "Tip: check 'podman-compose $COMPOSE_OVERRIDE ps -a' output."
-				exit 0
-			fi
-
-			echo "Generating user systemd unit files..."
-			UNIT_DIR="$HOME/.config/systemd/user"
-			mkdir -p "$UNIT_DIR"
-			generated_any=0
-			for cname in "${containers[@]}"; do
-				podman generate systemd --files --name "$cname" \
-					2> >(grep -v "DEPRECATED command" >&2)
-				[[ -f "container-$cname.service" ]] && mv "container-$cname.service" "$UNIT_DIR"/ && generated_any=1
-			done
-			[[ $generated_any -eq 0 ]] && echo "No unit files generated; check project label: ${PROJECT_LABEL}"
-
-			# Harden generated user units for rootless Podman/runtime dir
-			for cname in "${containers[@]}"; do
-				svc="$UNIT_DIR/container-$cname.service"
-				[[ -f $svc ]] || continue
-				grep -q '^Environment=XDG_RUNTIME_DIR=%t' "$svc" ||
-					sed -i '/^\[Service\]/a Environment=XDG_RUNTIME_DIR=%t' "$svc"
-				grep -q '^Environment=TMPDIR=%t' "$svc" ||
-					sed -i '/^\[Service\]/a Environment=TMPDIR=%t' "$svc"
-				grep -q '^ExecStartPre=.*/mkdir -p %t/containers %t/libpod/tmp' "$svc" ||
-					sed -i '/^\[Service\]/a ExecStartPre=/usr/bin/mkdir -p %t/containers %t/libpod/tmp' "$svc"
-			done
-
-			# Ensure nginx waits for tomcat (order + requirement across reboots)
-			svc="$UNIT_DIR/container-iriusrisk-nginx.service"
-			if [[ -f $svc ]]; then
-				grep -q '^After=container-iriusrisk-tomcat.service' "$svc" ||
-					sed -i '/^\[Unit\]/a After=container-iriusrisk-tomcat.service' "$svc"
-				grep -q '^Requires=container-iriusrisk-tomcat.service' "$svc" ||
-					sed -i '/^\[Unit\]/a Requires=container-iriusrisk-tomcat.service' "$svc"
-			fi
-
-			# Ensure Podman uses per-boot runtime dir in interactive shells
-			if ! grep -q 'XDG_RUNTIME_DIR=.*run/user' ~/.bash_profile 2>/dev/null; then
-				cat <<'EOF' >>~/.bash_profile
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export TMPDIR="${TMPDIR:-$XDG_RUNTIME_DIR}"
-EOF
-			fi
-
-			# Make sure we can talk to user systemd in this run (no start now; just enable)
-			if ! ensure_user_systemd_ready "$(id -un)"; then
-				echo "WARNING: user systemd not reachable; units placed in $UNIT_DIR."
-				echo "They will start on next login/reboot (linger enabled). To enable manually later:"
-				echo "  ensure_user_systemd_ready \"$(id -un)\" && systemctl --user enable container-*.service"
-			else
-				systemctl --user daemon-reload
-
-				for cname in "${containers[@]}"; do
-					svc="container-$cname.service"
-					if [[ -f "$UNIT_DIR/$svc" ]]; then
-						systemctl --user enable "$svc" || echo "WARNING: failed to enable $svc"
-					else
-						echo "WARNING: unit file missing: $UNIT_DIR/$svc"
-					fi
-				done
-			fi
-			echo "Podman rootless systemd user services created and enabled."
-			;;
-		*)
-			echo "Unknown engine '$CONTAINER_ENGINE'. Cannot deploy." >&2
-			exit 1
-			;;
-	esac
+	# Enable + start
+	$SYSTEMCTL daemon-reload
+	$SYSTEMCTL enable "$SERVICE_NAME"
+	$SYSTEMCTL restart "$SERVICE_NAME"
 }
 
 # —————————————————————————————————————————————————————————————
@@ -1366,4 +1255,135 @@ function copy_required() {
 	ensure_dest_file_slot "$dest"
 	cp -f -- "$src" "$dest" || die "copy failed: $src -> $dest"
 	echo "Copied $(basename "$src") -> $dest"
+}
+
+function parse_major_minor() {
+	# Usage: parse_major_minor "4.48.9" -> echoes "4 48"
+	local v="$1" maj min
+	maj="$(awk -F. '{print $1+0}' <<<"$v" 2>/dev/null || echo 0)"
+	min="$(awk -F. '{print ($2==""?0:$2)+0}' <<<"$v" 2>/dev/null || echo 0)"
+	echo "$maj $min"
+}
+
+function version_ge_4_48() {
+	# returns 0 (true) if $1 >= 4.48
+	local v="$1" maj min
+	read -r maj min < <(parse_major_minor "$v")
+	if ((maj > 4)); then return 0; fi
+	if ((maj == 4 && min >= 48)); then return 0; fi
+	return 1
+}
+
+function version_lt_4_48() {
+	# returns 0 (true) if $1 < 4.48
+	local v="$1" maj min
+	read -r maj min < <(parse_major_minor "$v")
+	if ((maj < 4)); then return 0; fi
+	if ((maj == 4 && min < 48)); then return 0; fi
+	return 1
+}
+
+function saml_files_exist() {
+	# Legacy SAML files must be in COMPOSE_DIR
+	[[ -f "$COMPOSE_DIR/SAMLv2-config.groovy" ]] || [[ -f "$COMPOSE_DIR/idp.xml" ]] || [[ -f "$COMPOSE_DIR/iriusrisk-sp.jks" ]]
+}
+
+function fetch_health() {
+	# Prints: "<http_code> <json>"
+	local code json
+	code="$(curl -sk -w "%{http_code}" -o /tmp/irius_health.json https://localhost/health || true)"
+	json="$(cat /tmp/irius_health.json 2>/dev/null || true)"
+	printf '%s %s\n' "$code" "$json"
+}
+
+function extract_version_from_json() {
+	# Reads JSON from stdin and outputs .version if present
+	if command -v jq >/dev/null 2>&1; then
+		jq -r '.version // empty' 2>/dev/null
+	else
+		sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+	fi
+}
+
+function wait_for_health() {
+	# Wait up to 60 minutes (60 retries x 60s) for HTTP 200; args: retries delay
+	local retries="${1:-60}" delay="${2:-60}" i=0 code json
+	while ((i < retries)); do
+		read -r code json < <(fetch_health)
+		if [[ $code == "200" ]]; then
+			printf '%s' "$json" >/tmp/irius_health.json
+			return 0
+		fi
+		sleep "$delay"
+		i=$((i + 1))
+	done
+	return 1
+}
+
+# —————————————————————————————————————————————————————————————
+# Legacy Podman service cleanup + single-unit generation helpers
+# —————————————————————————————————————————————————————————————
+
+function cleanup_legacy_podman_units() {
+	# Stop/disable known legacy units if they exist
+	local LEGACY_UNITS=(
+		"container-iriusrisk-tomcat.service"
+		"container-iriusrisk-startleft.service"
+		"container-iriusrisk-nginx.service"
+		"container-iriusrisk-postgres.service"
+		"container-reporting-module.service"
+	)
+	for u in "${LEGACY_UNITS[@]}"; do
+		if systemctl --user list-unit-files "$u" --no-legend 2>/dev/null | grep -q "$u"; then
+			systemctl --user stop "$u" 2>/dev/null || true
+			systemctl --user disable "$u" 2>/dev/null || true
+		fi
+	done
+
+	# Remove leftover unit files
+	rm -f "$HOME/.config/systemd/user/container-"*.service 2>/dev/null || true
+	systemctl --user daemon-reload || true
+
+	echo "Legacy Podman units cleaned."
+}
+
+function ensure_single_podman_unit_created() {
+	local UNIT_DIR="$HOME/.config/systemd/user"
+	local UNIT_PATH="$UNIT_DIR/iriusrisk-podman.service"
+	local COMPOSE_INVOKE="podman-compose"
+	local UNIT_COMPOSE_OVERRIDE="$COMPOSE_OVERRIDE"
+	local UNIT_WORKDIR="$(realpath "${CONTAINER_DIR:-$COMPOSE_DIR}")"
+
+	mkdir -p "$UNIT_DIR"
+
+	# Create/update oneshot unit that brings the stack up/down using the **computed** override
+	tee "$UNIT_PATH" >/dev/null <<EOF
+[Unit]
+Description=IriusRisk Podman Compose Stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=${UNIT_WORKDIR}
+Environment=PODMAN_SYSTEMD_UNIT=%n
+ExecStart=/usr/bin/env bash -lc '${COMPOSE_INVOKE} ${UNIT_COMPOSE_OVERRIDE} up -d'
+ExecStop=/usr/bin/env bash -lc '${COMPOSE_INVOKE} ${UNIT_COMPOSE_OVERRIDE} down'
+
+[Install]
+WantedBy=default.target
+EOF
+
+	# Reload, enable and start the unit now (with the current compose files),
+	# then wait for the stack to become healthy before proceeding.
+	systemctl --user daemon-reload
+	systemctl --user enable iriusrisk-podman.service || true
+	systemctl --user restart iriusrisk-podman.service
+
+	echo "Waiting for IriusRisk to become healthy under the new single unit (up to 60 minutes)..."
+	if ! wait_for_health 60 60; then
+		echo "ERROR: IriusRisk did not become healthy after migrating to single Podman unit. Aborting." >&2
+		exit 12
+	fi
 }

@@ -52,14 +52,13 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 - Runs interactively and asks questions about:
   - PostgreSQL setup (internal or external)
   - Hostname and external URLs
-  - SAML integration
 - Updates configuration files accordingly.
 - Can be run standalone if you want to just configure and not deploy.
 
 ### `preflight.sh`
 - Runs environment checks.
 - Detects missing dependencies (git, Java, psql, jq, container engine).
-- Reports warnings (e.g., missing SAML keystore passwords).
+- Reports warnings (e.g., missing passwords).
 - Exits with error if critical requirements are unmet.
 - Safe to run standalone for validation before a real install.
 
@@ -145,26 +144,26 @@ You can control the IriusRisk stack directly through `systemctl`.
 
 **Podman (rootless):**
 ```bash
-# Stop stack
-systemctl --user stop --all 'container-*.service'
-
 # Start stack
-systemctl --user start --all 'container-*.service'
+systemctl --user start iriusrisk-podman
+
+# Stop stack
+systemctl --user stop iriusrisk-podman
 
 # Restart stack
-systemctl --user restart --all 'container-*.service'
+systemctl --user restart iriusrisk-podman
 ```
 
 **Docker:**
 ```bash
 # Start stack
-systemctl start iriusrisk-docker
+sudo systemctl start iriusrisk-docker
 
 # Stop stack
-systemctl stop iriusrisk-docker
+sudo systemctl stop iriusrisk-docker
 
 # Restart stack
-systemctl restart iriusrisk-docker
+sudo systemctl restart iriusrisk-docker
 ```
 
 
@@ -184,7 +183,6 @@ To upgrade an existing IriusRisk on-prem installation:
 
 3. **Answer interactive prompts**:
    - **"How is your PostgreSQL configured?"** (internal or external)
-   - **"Are you using SAML?"** (yes/no)
 
 4. **Upgrade process**:
    - The script backs up your PostgreSQL database and compose files to the `irius_backups/` directory inside the current user's home folder.

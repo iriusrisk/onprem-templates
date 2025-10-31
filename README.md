@@ -349,4 +349,3 @@ To migrate an existing IriusRisk on-prem installation to the new template-based 
 ## 📎 Support & Docs
 
 - [Hardware and Software Requirements for IriusRisk](https://enterprise-support.iriusrisk.com/s/article/Hardware-and-Software-Requirements-for-IriusRisk)  
-- [Azure SAML Example](https://enterprise-support.iriusrisk.com/s/article/SAML-use-case-Microsoft-Azure-as-Identity-Provider)  

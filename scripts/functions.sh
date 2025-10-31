@@ -1319,3 +1319,78 @@ function wait_for_health() {
 	done
 	return 1
 }
+
+# —————————————————————————————————————————————————————————————
+# Legacy Podman service cleanup + single-unit generation helpers
+# —————————————————————————————————————————————————————————————
+
+function cleanup_legacy_podman_units() {
+	# Stop/disable known legacy units if they exist
+	local LEGACY_UNITS=(
+		"container-iriusrisk-tomcat.service"
+		"container-iriusrisk-startleft.service"
+		"container-iriusrisk-nginx.service"
+		"container-iriusrisk-postgres.service"
+		"container-reporting-module.service"
+	)
+	for u in "${LEGACY_UNITS[@]}"; do
+		if systemctl --user list-unit-files "$u" --no-legend 2>/dev/null | grep -q "$u"; then
+			systemctl --user stop "$u" 2>/dev/null || true
+			systemctl --user disable "$u" 2>/dev/null || true
+		fi
+	done
+
+	# Remove leftover unit files
+	rm -f "$HOME/.config/systemd/user/container-"*.service 2>/dev/null || true
+	systemctl --user daemon-reload || true
+
+	# Optional: scrub lingering containers/pods. Best-effort and quiet.
+	if command -v podman >/dev/null 2>&1; then
+		podman stop $(podman ps -qa) 2>/dev/null || true
+		podman rm -f $(podman ps -qa) 2>/dev/null || true
+		podman pod rm -f $(podman pod ps -q) 2>/dev/null || true
+	fi
+
+	echo "Legacy Podman units cleaned."
+}
+
+function ensure_single_podman_unit_created() {
+	local UNIT_DIR="$HOME/.config/systemd/user"
+	local UNIT_PATH="$UNIT_DIR/iriusrisk-podman.service"
+	local COMPOSE_INVOKE="podman-compose"
+	local UNIT_COMPOSE_OVERRIDE="$COMPOSE_OVERRIDE"
+	local UNIT_WORKDIR="${CONTAINER_DIR:-$COMPOSE_DIR}"
+
+	mkdir -p "$UNIT_DIR"
+
+	# Create/update oneshot unit that brings the stack up/down using the **computed** override
+	tee "$UNIT_PATH" >/dev/null <<EOF
+[Unit]
+Description=IriusRisk Podman Compose Stack
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=${UNIT_WORKDIR}
+Environment=PODMAN_SYSTEMD_UNIT=%n
+ExecStart=/usr/bin/env bash -lc '${COMPOSE_INVOKE} ${UNIT_COMPOSE_OVERRIDE} up -d'
+ExecStop=/usr/bin/env bash -lc '${COMPOSE_INVOKE} ${UNIT_COMPOSE_OVERRIDE} down'
+
+[Install]
+WantedBy=default.target
+EOF
+
+	# Reload, enable and start the unit now (with the current compose files),
+	# then wait for the stack to become healthy before proceeding.
+	systemctl --user daemon-reload
+	systemctl --user enable iriusrisk-podman.service || true
+	systemctl --user restart iriusrisk-podman.service
+
+	echo "Waiting for IriusRisk to become healthy under the new single unit (up to 60 minutes)..."
+	if ! wait_for_health 60 60; then
+		echo "ERROR: IriusRisk did not become healthy after migrating to single Podman unit. Aborting." >&2
+		exit 12
+	fi
+}

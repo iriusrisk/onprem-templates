@@ -219,7 +219,26 @@ C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
 echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 
 # —————————————————————————————————————————————————————————————
-# 8. Update compose tomcat tag (docker) or note podman build
+# 8. Migrate legacy Podman services → single user unit (pre-change)
+# —————————————————————————————————————————————————————————————
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	# Detect if any legacy user services are present (enabled/running) or unit files exist.
+	HAVE_LEGACY=""
+	if systemctl --user list-units 'container-*.service' --no-legend 2>/dev/null | grep -q .; then
+		HAVE_LEGACY="yes"
+	elif compgen -G "$HOME/.config/systemd/user/container-*.service" >/dev/null 2>&1; then
+		HAVE_LEGACY="yes"
+	fi
+
+	if [[ -n $HAVE_LEGACY ]]; then
+		echo "Migrating legacy Podman services to single user unit (iriusrisk-podman.service)..."
+		cleanup_legacy_podman_units
+		ensure_single_podman_unit_created
+	fi
+fi
+
+# —————————————————————————————————————————————————————————————
+# 9. Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
 	# Update ONLY Tomcat line (matches major-only or full semver; docker.io prefix optional)
@@ -237,7 +256,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 9. Update Startleft & Reporting Module tags from /versions/<ver>.json
+# 10. Update Startleft & Reporting Module tags from /versions/<ver>.json
 # —————————————————————————————————————————————————————————————
 VERSIONS_DIR="$SCRIPT_PATH/../versions"
 VER_FILE="$VERSIONS_DIR/$CHOSEN_VERSION.json"
@@ -254,7 +273,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 10. Rebuild local base images for podman (if applicable)
+# 11. Rebuild local base images for podman (if applicable)
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" ]]; then
 	container_registry_login
@@ -262,7 +281,7 @@ if [[ $CONTAINER_ENGINE == "podman" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 11. Update the stack
+# 12. Update the stack
 # —————————————————————————————————————————————————————————————
 echo "Cleaning up current stack and pulling latest images"
 
@@ -287,7 +306,7 @@ $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d
 echo "Stack restarted with latest images"
 
 # —————————————————————————————————————————————————————————————
-# 12. Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
+# 13. Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
 # —————————————————————————————————————————————————————————————
 echo
 echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."

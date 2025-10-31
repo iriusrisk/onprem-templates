@@ -1028,7 +1028,8 @@ deploy_stack() {
 	cd "$CONTAINER_DIR"
 
 	detect_engine_ctx
-	COMPOSE_OVERRIDE="$(build_compose_override "$USE_INTERNAL_PG")"
+	ENABLE_SAML_ONCLICK=${ENABLE_SAML_ONCLICK:-n}
+	COMPOSE_OVERRIDE=$(build_compose_override "$ENABLE_SAML_ONCLICK" "$USE_INTERNAL_PG")
 
 	# Clean current stack
 	if [[ -n $COMPOSE_RUN ]]; then

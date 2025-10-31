@@ -18,12 +18,24 @@ ERRORS=()
 WARNINGS=()
 
 # —————————————————————————————————————————————————————————————
+# 1. SAML setup
+# —————————————————————————————————————————————————————————————
+
+if [[ -n $SAML_CHOICE ]]; then
+	ENABLE_SAML="$SAML_CHOICE"
+	echo "SAML setup: Using value from one-click ('${SAML_CHOICE}')"
+else
+	ENABLE_SAML=$(prompt_yn "Enable SAML integration for this deployment?")
+fi
+
+# —————————————————————————————————————————————————————————————
 # 1. Decide on container engine & set compose locations
 # —————————————————————————————————————————————————————————————
 prompt_engine
 
 OVERRIDE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
 COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+SAML_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.saml.yml"
 
 # —————————————————————————————————————————————————————————————
 # 2. Check OS type
@@ -202,6 +214,31 @@ else
 		msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"
 		echo "$msg"
 		WARNINGS+=("$msg")
+	fi
+fi
+
+# —————————————————————————————————————————————————————————————
+# 9. SAML checks
+# —————————————————————————————————————————————————————————————
+if [[ $ENABLE_SAML == "y" && -n $SAML_FILE && -f $SAML_FILE && $CONTAINER_ENGINE == "docker" ]]; then
+	echo "Checking $SAML_FILE for required variables and valid values..."
+
+	SAML_KEYSTORE_PASSWORD=$(grep KEYSTORE_PASSWORD "$SAML_FILE" | head -1 | sed 's/.*KEYSTORE_PASSWORD=//;s/"//g' | xargs)
+	if [[ -z $SAML_KEYSTORE_PASSWORD || $SAML_KEYSTORE_PASSWORD == '${KEYSTORE_PASSWORD}' || $SAML_KEYSTORE_PASSWORD == '${KEYSTORE_PASSWORD}' ]]; then
+		msg="WARNING: KEYSTORE_PASSWORD must be set to a real value in $SAML_FILE (not left as \${KEYSTORE_PASSWORD})"
+		echo "$msg"
+		WARNINGS+=("$msg")
+	else
+		echo "KEYSTORE_PASSWORD set in $SAML_FILE"
+	fi
+
+	SAML_KEY_ALIAS_PASSWORD=$(grep KEY_ALIAS_PASSWORD "$SAML_FILE" | head -1 | sed 's/.*KEY_ALIAS_PASSWORD=//;s/"//g' | xargs)
+	if [[ -z $SAML_KEY_ALIAS_PASSWORD || $SAML_KEY_ALIAS_PASSWORD == '${KEY_ALIAS_PASSWORD}' || $SAML_KEY_ALIAS_PASSWORD == '${KEY_ALIAS_PASSWORD}' ]]; then
+		msg="WARNING: KEY_ALIAS_PASSWORD must be set to a real value in $SAML_FILE (not left as \${KEY_ALIAS_PASSWORD})"
+		echo "$msg"
+		WARNINGS+=("$msg")
+	else
+		echo "KEY_ALIAS_PASSWORD set in $SAML_FILE"
 	fi
 fi
 

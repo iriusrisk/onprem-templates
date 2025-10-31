@@ -32,9 +32,21 @@ echo
 prompt_engine
 
 # —————————————————————————————————————————————————————————————
+# 2. SAML question early if needed (validate Y/N)
+# —————————————————————————————————————————————————————————————
+ENABLE_SAML_ONCLICK=$(prompt_yn "Enable SAML integration for this deployment?")
+if [[ $ENABLE_SAML_ONCLICK == "n" ]]; then
+	PRE_WARNS=$(
+		printf '%s\n' "$PRE_WARNS" |
+			grep -Ev "KEYSTORE_PASSWORD must be set|KEY_ALIAS_PASSWORD must be set" ||
+			true
+	)
+fi
+
+# —————————————————————————————————————————————————————————————
 # 2. Run preflight and capture output
 # —————————————————————————————————————————————————————————————
-bash "$SCRIPT_PATH/preflight.sh" >preflight_output.txt 2>&1 || true
+SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh" >preflight_output.txt 2>&1 || true
 PRE_ERRS=$(grep 'ERROR:' preflight_output.txt | grep -v '^ERRORS:' || true)
 PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
 
@@ -108,12 +120,13 @@ elif [[ $POSTGRES_SETUP_OPTION == "2" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Run setup-wizard
+# 5. Run setup-wizard
 # —————————————————————————————————————————————————————————————
 echo
 echo "Launching the setup wizard..."
 set +e
 CONTAINER_ENGINE="$CONTAINER_ENGINE" \
+	SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
 	USE_INTERNAL_PG="$USE_INTERNAL_PG" \
 	./setup-wizard.sh
 set -e
@@ -121,7 +134,7 @@ set -e
 echo
 echo "Re-running preflight after setup..."
 cd "$SCRIPT_PATH"
-bash "$SCRIPT_PATH/preflight.sh"
+SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh"
 PRE_ERR=$?
 
 # —————————————————————————————————————————————————————————————

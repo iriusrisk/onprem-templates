@@ -32,26 +32,14 @@ echo
 prompt_engine
 
 # —————————————————————————————————————————————————————————————
-# 2. SAML question early if needed (validate Y/N)
+# 2. Run preflight and capture output
 # —————————————————————————————————————————————————————————————
-ENABLE_SAML_ONCLICK=$(prompt_yn "Enable SAML integration for this deployment?")
-if [[ $ENABLE_SAML_ONCLICK == "n" ]]; then
-	PRE_WARNS=$(
-		printf '%s\n' "$PRE_WARNS" |
-			grep -Ev "KEYSTORE_PASSWORD must be set|KEY_ALIAS_PASSWORD must be set" ||
-			true
-	)
-fi
-
-# —————————————————————————————————————————————————————————————
-# 3. Run preflight and capture output
-# —————————————————————————————————————————————————————————————
-SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh" >preflight_output.txt 2>&1 || true
+bash "$SCRIPT_PATH/preflight.sh" >preflight_output.txt 2>&1 || true
 PRE_ERRS=$(grep 'ERROR:' preflight_output.txt | grep -v '^ERRORS:' || true)
 PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
 
 # —————————————————————————————————————————————————————————————
-# 4. Install missing dependencies
+# 3. Install missing dependencies
 # —————————————————————————————————————————————————————————————
 if echo "$PRE_ERRS" | grep -q "git is not installed"; then
 	install_git
@@ -120,13 +108,12 @@ elif [[ $POSTGRES_SETUP_OPTION == "2" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 5. Run setup-wizard
+# 4. Run setup-wizard
 # —————————————————————————————————————————————————————————————
 echo
 echo "Launching the setup wizard..."
 set +e
 CONTAINER_ENGINE="$CONTAINER_ENGINE" \
-	SAML_CHOICE="$ENABLE_SAML_ONCLICK" \
 	USE_INTERNAL_PG="$USE_INTERNAL_PG" \
 	./setup-wizard.sh
 set -e
@@ -134,11 +121,11 @@ set -e
 echo
 echo "Re-running preflight after setup..."
 cd "$SCRIPT_PATH"
-SAML_CHOICE="$ENABLE_SAML_ONCLICK" bash "$SCRIPT_PATH/preflight.sh"
+bash "$SCRIPT_PATH/preflight.sh"
 PRE_ERR=$?
 
 # —————————————————————————————————————————————————————————————
-# 6. Block on critical errors
+# 5. Block on critical errors
 # —————————————————————————————————————————————————————————————
 if [[ $PRE_ERR -ne 0 ]]; then
 	echo
@@ -148,7 +135,7 @@ if [[ $PRE_ERR -ne 0 ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Confirm deploy (validate Y/N)
+# 6. Confirm deploy (validate Y/N)
 # —————————————————————————————————————————————————————————————
 DEPLOY_OK=$(prompt_yn "All checks complete. Proceed with deployment?")
 if [[ $DEPLOY_OK == "n" ]]; then
@@ -157,10 +144,22 @@ if [[ $DEPLOY_OK == "n" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Deploy based on selected engine
+# 7. Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
 CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 deploy_stack
 
 echo
 echo "IriusRisk deployment started."
+
+echo
+echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
+if wait_for_health 60 60; then
+	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"
+	POST_VERSION="$(printf '%s' "$POST_JSON" | extract_version_from_json)"
+	echo "Installation successful: IriusRisk is healthy. Detected version: ${POST_VERSION:-unknown}"
+else
+	die "IriusRisk did not become healthy within 60 minutes."
+fi
+
+echo "Deployment completed."

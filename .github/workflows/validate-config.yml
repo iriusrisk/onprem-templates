@@ -34,12 +34,12 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Validate docker-compose syntax
-        run: docker-compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml -f docker/docker-compose.saml.yml config
+        run: docker-compose -f docker/docker-compose.yml -f docker/docker-compose.override.yml config
 
       - name: Validate Podman config
         run: |
           if [ -f podman/container-compose.yml ]; then
-            docker-compose -f podman/container-compose.yml -f podman/container-compose.override.yml -f podman/container-compose.saml.yml config
+            docker-compose -f podman/container-compose.yml -f podman/container-compose.override.yml config
           fi
 
       - name: Set up Python

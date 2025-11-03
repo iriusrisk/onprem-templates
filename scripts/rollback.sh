@@ -30,7 +30,7 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Set engine, SAML and Postgres options
+# 1. Set engine and Postgres options
 # —————————————————————————————————————————————————————————————
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
@@ -41,8 +41,6 @@ if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
 else
 	USE_INTERNAL_PG="n"
 fi
-
-SAML_ENABLED=$(prompt_yn "Are you using SAML?")
 
 # —————————————————————————————————————————————————————————————
 # 2. Locate backup directory and discover available versions
@@ -125,7 +123,7 @@ echo
 # —————————————————————————————————————————————————————————————
 # 3. Compute compose context and stop the stack cleanly
 # —————————————————————————————————————————————————————————————
-COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
+COMPOSE_OVERRIDE=$(build_compose_override "$USE_INTERNAL_PG")
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
 COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
 
@@ -246,6 +244,16 @@ echo "Restarting stack to complete rollback"
 
 # Spin up IriusRisk stack
 $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d
+
+echo
+echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
+if wait_for_health 60 60; then
+	POST_JSON="$(cat /tmp/irius_health.json 2>/dev/null || true)"
+	POST_VERSION="$(printf '%s' "$POST_JSON" | extract_version_from_json)"
+	echo "Rollback successful: IriusRisk is healthy. Detected version: ${POST_VERSION:-unknown}"
+else
+	die "IriusRisk did not become healthy within 60 minutes after rollback."
+fi
 
 echo
 echo "Rollback complete."

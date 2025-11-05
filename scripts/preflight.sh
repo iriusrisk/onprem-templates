@@ -40,30 +40,31 @@ fi
 # —————————————————————————————————————————————————————————————
 # 3. Check for git and global git config
 # —————————————————————————————————————————————————————————————
-if command -v git &>/dev/null; then
-	echo "git found."
-	GIT_NAME=$(git config --global user.name)
-	if [[ -z $GIT_NAME ]]; then
-		msg="WARNING: git user.name is not set globally. Use: git config --global user.name 'Your Name'"
-		echo "$msg"
-		WARNINGS+=("$msg")
+if [ "$OFFLINE" -eq 0 ]; then
+	if command -v git &>/dev/null; then
+		echo "git found."
+		GIT_NAME=$(git config --global user.name)
+		if [[ -z $GIT_NAME ]]; then
+			msg="WARNING: git user.name is not set globally. Use: git config --global user.name 'Your Name'"
+			echo "$msg"
+			WARNINGS+=("$msg")
+		else
+			echo "git user.name: $GIT_NAME"
+		fi
+		GIT_EMAIL=$(git config --global user.email)
+		if [[ -z $GIT_EMAIL ]]; then
+			msg="WARNING: git user.email is not set globally. Use: git config --global user.email 'your@email.com'"
+			echo "$msg"
+			WARNINGS+=("$msg")
+		else
+			echo "git user.email: $GIT_EMAIL"
+		fi
 	else
-		echo "git user.name: $GIT_NAME"
-	fi
-	GIT_EMAIL=$(git config --global user.email)
-	if [[ -z $GIT_EMAIL ]]; then
-		msg="WARNING: git user.email is not set globally. Use: git config --global user.email 'your@email.com'"
+		msg="ERROR: git is not installed. Please install git to clone or update the repository."
 		echo "$msg"
-		WARNINGS+=("$msg")
-	else
-		echo "git user.email: $GIT_EMAIL"
+		ERRORS+=("$msg")
 	fi
-else
-	msg="ERROR: git is not installed. Please install git to clone or update the repository."
-	echo "$msg"
-	ERRORS+=("$msg")
 fi
-
 # —————————————————————————————————————————————————————————————
 # 4. Check chosen engine and versions
 # —————————————————————————————————————————————————————————————

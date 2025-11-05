@@ -178,6 +178,7 @@ To upgrade an existing IriusRisk on-prem installation:
 
 2. **Run the upgrade script**:
    ```bash
+   git pull
    ./upgrade.sh
    ```
 

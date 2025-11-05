@@ -1,6 +1,6 @@
 version: '3.7'
 networks:
-  iriusrisk-frontend:
+  iriusrisk-backend:
 services:
   postgres:
     image: docker.io/library/postgres:15.4
@@ -11,7 +11,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
-      - iriusrisk-frontend
+      - iriusrisk-backend
     volumes:
       - "./postgres/data:/var/lib/postgresql/data:z"
     restart: always

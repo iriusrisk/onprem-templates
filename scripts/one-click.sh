@@ -10,6 +10,31 @@ fi
 
 init_logging "$0"
 
+# Offline mode setup
+
+OFFLINE=0
+OFFLINE_BUNDLE_DIR="${OFFLINE_BUNDLE_DIR:-./offline_bundle}"
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--offline)
+			OFFLINE=1
+			shift
+			;;
+		--bundle)
+			OFFLINE_BUNDLE_DIR="$2"
+			shift 2
+			;;
+		*)
+			ARGS+=("$1")
+			shift
+			;;
+	esac
+done
+set -- "${ARGS[@]:-}"
+
+export OFFLINE OFFLINE_BUNDLE_DIR
+
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————
@@ -41,17 +66,29 @@ PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
 # —————————————————————————————————————————————————————————————
 # 3. Install missing dependencies
 # —————————————————————————————————————————————————————————————
-if echo "$PRE_ERRS" | grep -q "git is not installed"; then
-	install_git
+if [ "$OFFLINE" -eq 0 ]; then
+	if echo "$PRE_ERRS" | grep -q "git is not installed"; then
+		install_git
+	fi
+	if echo "$PRE_ERRS" | grep -q "Java not found"; then
+		install_java
+	fi
+	if echo "$PRE_ERRS" | grep -q "psql is not installed"; then
+		install_psql
+	fi
+	if echo "$PRE_ERRS" | grep -q "jq is not installed"; then
+		install_jq
+	fi
 fi
-if echo "$PRE_ERRS" | grep -q "Java not found"; then
-	install_java
-fi
-if echo "$PRE_ERRS" | grep -q "psql is not installed"; then
-	install_psql
-fi
-if echo "$PRE_ERRS" | grep -q "jq is not installed"; then
-	install_jq
+
+# Offline mode setup
+if [ "$OFFLINE" -eq 1 ]; then
+	echo "[offline] Enabling offline mode using bundle at: $OFFLINE_BUNDLE_DIR"
+	require_rhel
+	offline_setup_local_repos         # install deps from bundled RPMs
+	offline_install_dependencies      # podman/podman-compose/java.psql/jq
+	offline_load_images               # load all *.oci.tar
+	offline_block_external_registries # avoid accidental pulls
 fi
 
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
@@ -79,12 +116,14 @@ if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		fi
 	fi
 elif [[ $CONTAINER_ENGINE == "podman" ]]; then
-	# Install podman if missing
-	if ! command -v podman &>/dev/null; then
-		install_podman
-	fi
-	if ! command -v podman-compose &>/dev/null; then
-		install_podman
+	if [ "$OFFLINE" -eq 0 ]; then
+		# Install podman if missing
+		if ! command -v podman &>/dev/null; then
+			install_podman
+		fi
+		if ! command -v podman-compose &>/dev/null; then
+			install_podman
+		fi
 	fi
 
 	# Ensure we will run podman rootless as the invoking user (no sudo anywhere)
@@ -92,6 +131,9 @@ elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 
 	# Rootless pre-reqs (linger, config dirs, networking)
 	setup_podman_rootless "${ROOTLESS_USER}"
+	if [ "$OFFLINE" -eq 1 ]; then
+		ensure_subids_for_user "${ROOTLESS_USER}"
+	fi
 else
 	echo "Unknown container engine: $CONTAINER_ENGINE"
 	exit 1

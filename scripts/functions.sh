@@ -1440,12 +1440,12 @@ EOF
 
 # ====== Install required packages offline ======
 function offline_install_dependencies() {
-	# Bring policy/container-selinux/passt in line first to avoid cross-minor conflicts
-	echo "==> Upgrading SELinux policy, container-selinux, and passt from offline repo"
-	sudo dnf --disablerepo='*' --enablerepo=offline-local -y upgrade \
+	# Install/upgrade SELinux policy + container-selinux + passt first (quiet + robust)
+	sudo dnf --disablerepo='*' --enablerepo=offline-local -y install \
+		--best --allowerasing \
 		selinux-policy selinux-policy-base selinux-policy-targeted \
 		container-selinux \
-		passt passt-selinux || true
+		passt passt-selinux
 
 	# Core runtimes & container stack (explicit RPMs, not the 'container-tools' module)
 	local base_pkgs=(

@@ -1440,18 +1440,46 @@ EOF
 
 # ====== Install required packages offline ======
 function offline_install_dependencies() {
-	# core runtime + helpers
-	local pkgs=(
+	# Install/upgrade SELinux policy + container-selinux + passt first (quiet + robust)
+	sudo dnf --disablerepo='*' --enablerepo=offline-local -y install \
+		--best --allowerasing \
+		selinux-policy selinux-policy-base selinux-policy-targeted \
+		container-selinux \
+		passt passt-selinux
+
+	# Core runtimes & container stack (explicit RPMs, not the 'container-tools' module)
+	local base_pkgs=(
+		# runtimes/tools
 		java-17-openjdk postgresql jq
-		container-tools podman-compose python3-dotenv
-		nftables iptables-nft slirp4netns
-		netavark aardvark-dns      # <-- add netavark (and keep aardvark-dns)
-		fuse-overlayfs conmon crun # <-- recommended runtime bits for rootless
+		podman buildah skopeo
+		# rootless/container runtime bits
+		conmon crun fuse-overlayfs
+		# podman networking stack
+		nftables iptables-nft slirp4netns netavark aardvark-dns
+		# python base in case we need wheels
+		python3 python3-pip
 	)
-	sudo dnf --disablerepo="*" --enablerepo="offline-local" install -y "${pkgs[@]}" || {
-		echo "[offline] Failed installing base packages from offline repo." >&2
-		exit 1
-	}
+
+	echo "==> Installing container stack and runtime packages"
+	sudo dnf --disablerepo='*' --enablerepo=offline-local -y install "${base_pkgs[@]}"
+
+	# podman-compose & python-dotenv:
+	#    try RPMs first; if absent in repo, fall back to wheels shipped in bundle
+	echo "==> Installing podman-compose & python-dotenv"
+	if sudo dnf --disablerepo='*' --enablerepo=offline-local -y install podman-compose python3-dotenv; then
+		echo "==> Installed podman-compose / python3-dotenv from RPMs"
+	else
+		echo "==> RPMs not present; installing wheels from ./wheels"
+		if command -v python3 >/dev/null 2>&1; then
+			# use only local wheels, no internet
+			python3 -m pip install --no-index --find-links "$(pwd)/wheels" podman-compose python-dotenv
+		else
+			echo "WARNING: python3 not present; cannot install wheel fallbacks" >&2
+			return 1
+		fi
+	fi
+
+	echo "==> Offline dependency installation complete."
 }
 
 # ====== Block external registries (safety) ======

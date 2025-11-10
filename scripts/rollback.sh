@@ -14,6 +14,26 @@ fi
 
 init_logging "$0"
 
+# Offline mode setup
+
+OFFLINE=0
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--offline)
+			OFFLINE=1
+			shift
+			;;
+		*)
+			ARGS+=("$1")
+			shift
+			;;
+	esac
+done
+set -- "${ARGS[@]:-}"
+
+export OFFLINE
+
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————
@@ -46,6 +66,7 @@ fi
 # 2. Locate backup directory and discover available versions
 # —————————————————————————————————————————————————————————————
 BDIR="${BDIR:-/home/$USER/irius_backups}"
+OFFLINE_BUNDLE_DIR=$BDIR
 
 echo "Looking for backups under: $BDIR"
 [[ -d $BDIR ]] || {
@@ -196,7 +217,7 @@ echo
 # —————————————————————————————————————————————————————————————
 # 7. Rebuild local custom images for podman based on rollback version
 # —————————————————————————————————————————————————————————————
-if [[ $CONTAINER_ENGINE == "podman" ]]; then
+if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	# Try to derive version from the chosen backup filenames
 	# First look at compose tar name, then DB dump name
 	NAME_VER=""
@@ -223,6 +244,7 @@ if [[ $CONTAINER_ENGINE == "podman" ]]; then
 	fi
 
 	echo "Rebuilding Podman custom images for version: $CHOSEN_VERSION"
+	container_registry_login
 	build_podman_custom_images "$CHOSEN_VERSION"
 	echo "Podman custom images rebuilt."
 	echo
@@ -231,14 +253,18 @@ fi
 # —————————————————————————————————————————————————————————————
 # 8. Pull images referenced by restored compose and restart full stack
 # —————————————————————————————————————————————————————————————
-echo "Cleaning up current stack and pulling rollback images"
+echo "Cleaning up current stack and loading rollback images"
 $CONTAINER_ENGINE system prune -f
 
 # Destroy whole IriusRisk stack
 $COMPOSE_TOOL $COMPOSE_OVERRIDE down
 
-# Force download latest images
-$COMPOSE_TOOL $COMPOSE_OVERRIDE pull
+if [ "$OFFLINE" -eq 0 ]; then
+	# Force download latest images
+	$COMPOSE_TOOL $COMPOSE_OVERRIDE pull
+else
+	offline_load_images
+fi
 
 echo "Restarting stack to complete rollback"
 

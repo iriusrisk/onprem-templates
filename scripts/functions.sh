@@ -1587,3 +1587,38 @@ function ensure_subids_for_user() {
 	fi
 	podman system migrate
 }
+
+function copy_with_fullref() {
+	local src_ref="$1"  # e.g. docker.io/continuumsecurity/iriusrisk-prod:startleft
+	local out_name="$2" # e.g. docker.io_continuumsecurity_iriusrisk-prod_startleft.oci.tar
+
+	local src_transport=""
+	if podman image exists "$src_ref"; then
+		src_transport="containers-storage:$src_ref"
+	else
+		src_transport="docker://$src_ref"
+	fi
+
+	mkdir -p "$BDIR/images"
+
+	echo "Saving $src_transport -> images/$out_name (embed full ref)"
+	if [[ $src_transport == docker://* ]]; then
+		# hitting the registry: include auth explicitly
+		skopeo copy --all --insecure-policy "${AUTHARGS[@]}" \
+			"$src_transport" \
+			"oci-archive:$BDIR/images/$out_name:$src_ref"
+	else
+		# from local storage: no auth needed
+		skopeo copy --insecure-policy \
+			"$src_transport" \
+			"oci-archive:$BDIR/images/$out_name:$src_ref"
+	fi
+}
+
+function save_local_with_fullref() {
+	local ref="$1" fname="$2"
+	echo "Saving local: $ref -> images/$fname (embed full ref)"
+	skopeo copy --insecure-policy \
+		"containers-storage:$ref" \
+		"oci-archive:$BDIR/images/$fname:$ref"
+}

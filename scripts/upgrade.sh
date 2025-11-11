@@ -248,7 +248,42 @@ C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
 echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 
 # —————————————————————————————————————————————————————————————
-# 8. Migrate legacy Podman services → single user unit (pre-change)
+# 8. Backup original container images (offline mode only)
+# —————————————————————————————————————————————————————————————
+
+if [ "$OFFLINE" -eq 1 ]; then
+	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:startleft \
+		docker.io_continuumsecurity_iriusrisk-prod_startleft.oci.tar
+
+	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:reporting-module \
+		docker.io_continuumsecurity_iriusrisk-prod_reporting-module.oci.tar
+
+	# Ensure your local custom images exist
+	# nginx:
+	podman image exists localhost/nginx-rhel:latest || die "Missing image: localhost/nginx-rhel:latest"
+	# tomcat: ensure we have :latest (retag if only versioned exists)
+	if ! podman image exists localhost/tomcat-rhel:latest; then
+		if podman image exists "localhost/tomcat-rhel:tomcat-$TOMCAT_V"; then
+			echo "Retagging localhost/tomcat-rhel:tomcat-$TOMCAT_V -> localhost/tomcat-rhel:latest"
+			podman tag "localhost/tomcat-rhel:tomcat-$TOMCAT_V" localhost/tomcat-rhel:latest
+		else
+			die "Missing image: localhost/tomcat-rhel:(latest or tomcat-$TOMCAT_V)"
+		fi
+	fi
+	# postgres:
+	podman image exists localhost/postgres-gpg:15.4 || die "Missing image: localhost/postgres-gpg:15.4"
+
+	# Save local custom images with embedded refs
+	save_local_with_fullref localhost/nginx-rhel:latest localhost_nginx-rhel.oci.tar
+	save_local_with_fullref localhost/tomcat-rhel:latest localhost_tomcat-rhel.oci.tar
+	save_local_with_fullref localhost/postgres-gpg:15.4 localhost_postgres-gpg_15.4.oci.tar
+
+	echo "Writing checksums"
+	(cd "$BDIR" && rm -f checksums.sha256 && sha256sum images/*.oci.tar >checksums.sha256)
+fi
+
+# —————————————————————————————————————————————————————————————
+# 9. Migrate legacy Podman services → single user unit (pre-change)
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" ]]; then
 	# Detect if any legacy user services are present (enabled/running) or unit files exist.
@@ -267,7 +302,7 @@ if [[ $CONTAINER_ENGINE == "podman" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 9. Update compose tomcat tag (docker) or note podman build
+# 10. Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
 	# Update ONLY Tomcat line (matches major-only or full semver; docker.io prefix optional)
@@ -285,7 +320,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 10. Update Startleft & Reporting Module tags from /versions/<ver>.json
+# 11. Update Startleft & Reporting Module tags from /versions/<ver>.json
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
 	VERSIONS_DIR="$SCRIPT_PATH/../versions"
@@ -304,15 +339,15 @@ if [ "$OFFLINE" -eq 0 ]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 11. Rebuild local base images for podman (if applicable)
+# 12. Rebuild local base images for podman (if applicable)
 # —————————————————————————————————————————————————————————————
-if [[ $ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
+if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	container_registry_login
 	build_podman_custom_images "$CHOSEN_VERSION"
 fi
 
 # —————————————————————————————————————————————————————————————
-# 12. Update the stack
+# 13. Update the stack
 # —————————————————————————————————————————————————————————————
 echo "Cleaning up current stack and loading latest images"
 
@@ -341,7 +376,7 @@ $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d
 echo "Stack restarted with latest images"
 
 # —————————————————————————————————————————————————————————————
-# 13. Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
+# 14. Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
 # —————————————————————————————————————————————————————————————
 echo
 echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."
@@ -407,14 +442,22 @@ if wait_for_health 60 60; then
 		else
 			echo "WARNING: Stack did not become healthy within 60 minutes after removing SAML override."
 			echo "Starting rollback..."
-			bash "$SCRIPT_PATH/rollback.sh"
+			if [ "$OFFLINE" -eq 0 ]; then
+				bash "$SCRIPT_PATH/rollback.sh"
+			else
+				bash "$SCRIPT_PATH/rollback.sh" --offline
+			fi
 		fi
 	fi
 
 else
 	echo "WARNING: IriusRisk did not become healthy within 60 minutes; legacy SAML files (if any) were NOT deleted."
 	echo "Starting rollback."
-	bash "$SCRIPT_PATH/rollback.sh"
+	if [ "$OFFLINE" -eq 0 ]; then
+		bash "$SCRIPT_PATH/rollback.sh"
+	else
+		bash "$SCRIPT_PATH/rollback.sh" --offline
+	fi
 fi
 
 echo "Upgrade script completed."

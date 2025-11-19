@@ -234,8 +234,7 @@ function install_and_configure_postgres() {
 	local postgres_file="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.yml"
 	local container_path="../$CONTAINER_ENGINE"
 
-	# Generate a single password for both Postgres superuser and app user
-	DB_PASS="$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)"
+	configure_ip_pass
 
 	echo "Starting internal Postgres container..."
 	cd "$container_path"
@@ -366,9 +365,6 @@ EOF
 		podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'" | grep -q 1 ||
 			podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER;"
 	fi
-
-	DB_IP="postgres" # service name on the compose network
-	export DB_IP DB_PASS
 
 	echo "Internal PostgreSQL (container) is ready:"
 	echo "  Host: $DB_IP"
@@ -989,6 +985,44 @@ function update_component_tag() {
 	else
 		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
 	fi
+}
+
+function configure_ip_pass() {
+	# USE_INTERNAL_PG and CONTAINER_ENGINE should already be set before calling this
+
+	if [[ ${USE_INTERNAL_PG:-n} == "y" ]]; then
+		# Internal Postgres via compose service
+		DB_IP="postgres"
+
+		# Use DB_PASS from env if set, otherwise generate one
+		if [[ -n ${DB_PASS:-} ]]; then
+			echo "Using Postgres password from environment for internal Postgres."
+		else
+			echo "Generating random Postgres password for internal Postgres."
+			DB_PASS="$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)"
+		fi
+	else
+		# External Postgres
+
+		# Use DB_IP from env if set (for local install), otherwise prompt
+		if [[ -n ${DB_IP:-} ]]; then
+			echo "Using Postgres IP address from environment: $DB_IP"
+		else
+			DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
+		fi
+
+		# Use DB_PASS from env if set (for local install), otherwise prompt
+		if [[ -n ${DB_PASS:-} ]]; then
+			echo "Using Postgres password from environment."
+		else
+			DB_PASS=$(prompt_nonempty "Enter the Postgres password")
+			if [[ ${CONTAINER_ENGINE:-} == "podman" ]]; then
+				encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
+			fi
+		fi
+	fi
+
+	export DB_IP DB_PASS
 }
 
 ########################################

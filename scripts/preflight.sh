@@ -195,9 +195,6 @@ if [[ -n $OVERRIDE_FILE && -f $OVERRIDE_FILE ]]; then
 	else
 		echo "IRIUS_DB_URL: $IRIUS_DB_URL"
 	fi
-	if [[ $CONTAINER_ENGINE == podman ]]; then
-		export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${DB_PASS}"
-	fi
 else
 	if [[ -n $OVERRIDE_FILE ]]; then
 		msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"
@@ -210,23 +207,13 @@ fi
 # 8. Postgres connectivity check (if applicable)
 # —————————————————————————————————————————————————————————————
 if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
-	DB_IP=$(echo "$IRIUS_DB_URL" | sed -n 's/.*jdbc:postgresql:\/\/\([^:/]*\).*/\1/p')
-	DB_PASS=$(echo "$IRIUS_DB_URL" | sed -n 's/.*password=\([^& ]*\).*/\1/p')
-
 	if [[ $DB_IP == "postgres" ]]; then
 		DB_IP="localhost"
 	fi
-
-	if [[ -n $DB_IP && -n $DB_PASS ]]; then
-		if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then
-			echo "Postgres connection to $DB_IP OK"
-		else
-			msg="ERROR: Could not connect to Postgres at $DB_IP with supplied password (check Postgres service, IP, and credentials)"
-			echo "$msg"
-			ERRORS+=("$msg")
-		fi
+	if PGPASSWORD="$DB_PASS" psql -h "$DB_IP" -U iriusprod -c '\q' 2>/dev/null; then
+		echo "Postgres connection to $DB_IP OK"
 	else
-		msg="ERROR: Could not parse DB_IP or DB_PASS from IRIUS_DB_URL in $OVERRIDE_FILE"
+		msg="ERROR: Could not connect to Postgres at $DB_IP with supplied password (check Postgres service, IP, and credentials)"
 		echo "$msg"
 		ERRORS+=("$msg")
 	fi

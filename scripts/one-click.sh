@@ -142,11 +142,11 @@ fi
 prompt_postgres_option setup
 
 if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
-	install_and_configure_postgres
 	export USE_INTERNAL_PG="y"
-	export DB_PASS
+	install_and_configure_postgres
 elif [[ $POSTGRES_SETUP_OPTION == "2" ]]; then
 	export USE_INTERNAL_PG="n"
+	configure_ip_pass
 fi
 
 # —————————————————————————————————————————————————————————————

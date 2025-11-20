@@ -23,37 +23,6 @@ COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
 # —————————————————————————————————————————————————————————————
 HOST_NAME=$(prompt_nonempty "Enter the public hostname for your IriusRisk instance (HOST_NAME, e.g. iriusrisk.example.com)")
 
-# Internal or external Postgres
-if [[ -n $USE_INTERNAL_PG ]]; then
-	echo "Using internal Postgres setting: $USE_INTERNAL_PG"
-else
-	USE_INTERNAL_PG=$(prompt_yn "Do you want to use an internal Postgres container")
-fi
-
-if [[ $USE_INTERNAL_PG == "y" ]]; then
-	DB_IP="postgres"
-else
-	# Use DB_IP from env if set (for local install), otherwise prompt
-	if [[ -n $DB_IP ]]; then
-		echo "Using Postgres IP address from environment: $DB_IP"
-	else
-		DB_IP=$(prompt_nonempty "Enter the Postgres IP address (DB host)")
-	fi
-fi
-
-# Use DB_PASS from env if set (for local install), otherwise prompt
-if [[ -n $DB_PASS ]]; then
-	echo "Using Postgres password from environment."
-else
-	DB_PASS=$(prompt_nonempty "Enter the Postgres password")
-	if [[ $CONTAINER_ENGINE == "podman" ]]; then
-		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
-	fi
-fi
-
-# Properly escape JDBC URL for YAML
-JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"
-
 # Properly escape protocol colon in IRIUS_EXT_URL
 IRIUS_EXT_URL="https\\\\://$HOST_NAME"
 

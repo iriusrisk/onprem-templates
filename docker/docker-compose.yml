@@ -10,7 +10,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    image: docker.io/continuumsecurity/iriusrisk-prod:nginx
+    image: ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:nginx
     container_name: iriusrisk-nginx
     networks:
       - iriusrisk-frontend
@@ -28,7 +28,7 @@ services:
       - grails_env=production
       - STARTLEFT_URL=http://startleft:8081/api/v1/startleft/iac
       - IRIUS_JWT_PRIVATE_KEY_PATH=/etc/irius/ec_private.pem
-      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000      
+      - IRIUS_REPORTING_MODULE_URL=http://reporting-module:3000
       - CATALINA_OPTS=
             -XX:+UseParallelGC
             -XX:+UseContainerSupport
@@ -36,7 +36,7 @@ services:
             -XX:MaxMetaspaceSize=2G
             -XX:ReservedCodeCacheSize=2G
             -XX:MaxRAMPercentage=50
-    image: docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
+    image: ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:tomcat-4
     container_name: iriusrisk-tomcat
     networks:
       - iriusrisk-frontend
@@ -49,7 +49,7 @@ services:
   startleft:
     environment:
       - IRIUS_SERVER=http://tomcat:80
-    image: docker.io/continuumsecurity/iriusrisk-prod:startleft
+    image: ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:startleft
     container_name: iriusrisk-startleft
     command: ["uvicorn", "startleft.startleft.api.fastapi_server:webapp", "--host", "0.0.0.0", "--port", "8081"]
     networks:
@@ -60,7 +60,7 @@ services:
     cpu_shares: 128
 
   reporting-module:
-    image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+    image: ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:reporting-module
     container_name: reporting-module
     networks:
       - iriusrisk-backend

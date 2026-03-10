@@ -139,6 +139,10 @@ else
 	exit 1
 fi
 
+if [ "$OFFLINE" -eq 0 ]; then
+	prompt_registry_settings
+fi
+
 prompt_postgres_option setup
 
 if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then

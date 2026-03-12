@@ -42,7 +42,7 @@ echo "IriusRisk One-Click Bootstrap Deployment"
 echo "---------------------------------------"
 
 # —————————————————————————————————————————————————————————————
-# 0. Ensure we're in the scripts dir
+# Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_PATH/.." && pwd)"
@@ -52,19 +52,19 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Pick your container engine
+# Pick your container engine
 # —————————————————————————————————————————————————————————————
 prompt_engine
 
 # —————————————————————————————————————————————————————————————
-# 2. Run preflight and capture output
+# Run preflight and capture output
 # —————————————————————————————————————————————————————————————
 bash "$SCRIPT_PATH/preflight.sh" >preflight_output.txt 2>&1 || true
 PRE_ERRS=$(grep 'ERROR:' preflight_output.txt | grep -v '^ERRORS:' || true)
 PRE_WARNS=$(grep 'WARNING:' preflight_output.txt | grep -v '^WARNINGS:' || true)
 
 # —————————————————————————————————————————————————————————————
-# 3. Install missing dependencies
+# Install missing dependencies
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
 	if echo "$PRE_ERRS" | grep -q "git is not installed"; then
@@ -148,15 +148,19 @@ elif [[ $POSTGRES_SETUP_OPTION == "2" ]]; then
 	export USE_INTERNAL_PG="n"
 	configure_ip_pass
 fi
+if [ "$OFFLINE" -eq 0 ]; then
+	JEFF_ENABLED=$(prompt_yn "Set up Jeff AI assistant?")
+fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Run setup-wizard
+# Run setup-wizard
 # —————————————————————————————————————————————————————————————
 echo
 echo "Launching the setup wizard..."
 set +e
 CONTAINER_ENGINE="$CONTAINER_ENGINE" \
 	USE_INTERNAL_PG="$USE_INTERNAL_PG" \
+	JEFF_ENABLED="$JEFF_ENABLED" \
 	./setup-wizard.sh
 set -e
 
@@ -167,7 +171,7 @@ bash "$SCRIPT_PATH/preflight.sh"
 PRE_ERR=$?
 
 # —————————————————————————————————————————————————————————————
-# 5. Block on critical errors
+# Block on critical errors
 # —————————————————————————————————————————————————————————————
 if [[ $PRE_ERR -ne 0 ]]; then
 	echo
@@ -177,7 +181,7 @@ if [[ $PRE_ERR -ne 0 ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 6. Confirm deploy (validate Y/N)
+# Confirm deploy (validate Y/N)
 # —————————————————————————————————————————————————————————————
 DEPLOY_OK=$(prompt_yn "All checks complete. Proceed with deployment?")
 if [[ $DEPLOY_OK == "n" ]]; then
@@ -186,7 +190,7 @@ if [[ $DEPLOY_OK == "n" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 7. Deploy based on selected engine
+# Deploy based on selected engine
 # —————————————————————————————————————————————————————————————
 CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 deploy_stack

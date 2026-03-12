@@ -41,7 +41,7 @@ echo "IriusRisk Rollback Deployment"
 echo "---------------------------------------"
 
 # —————————————————————————————————————————————————————————————
-# 0. Ensure we're in the scripts dir
+# Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_PATH"
@@ -50,7 +50,7 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Set engine and Postgres options
+# Set engine and Postgres options
 # —————————————————————————————————————————————————————————————
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
@@ -63,7 +63,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 2. Locate backup directory and discover available versions
+# Locate backup directory and discover available versions
 # —————————————————————————————————————————————————————————————
 BDIR="${BDIR:-/home/$USER/irius_backups}"
 OFFLINE_BUNDLE_DIR=$BDIR
@@ -142,7 +142,7 @@ echo "  DB     : $DB_DUMP"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 3. Compute compose context and stop the stack cleanly
+# Compute compose context and stop the stack cleanly
 # —————————————————————————————————————————————————————————————
 COMPOSE_OVERRIDE=$(build_compose_override "$USE_INTERNAL_PG")
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
@@ -161,7 +161,7 @@ echo "Stopping current stack ..."
 $COMPOSE_TOOL $COMPOSE_OVERRIDE down
 
 # —————————————————————————————————————————————————————————————
-# 4. Restore compose files from backup
+# Restore compose files from backup
 # —————————————————————————————————————————————————————————————
 echo "Restoring compose files from $COMPOSE_TAR -> $COMPOSE_DIR"
 tar -xzf "$COMPOSE_TAR" -C "$COMPOSE_DIR"
@@ -169,7 +169,7 @@ echo "Compose restore complete."
 echo
 
 # —————————————————————————————————————————————————————————————
-# 5. Ensure DB service available for restore
+# Ensure DB service available for restore
 # —————————————————————————————————————————————————————————————
 if [[ $USE_INTERNAL_PG == "y" ]]; then
 	echo "Starting internal Postgres for restore ..."
@@ -192,7 +192,7 @@ fi
 echo
 
 # —————————————————————————————————————————————————————————————
-# 6. Restore database
+# Restore database
 # —————————————————————————————————————————————————————————————
 echo "Restoring database from $DB_DUMP ..."
 if [[ $USE_INTERNAL_PG == "y" ]]; then
@@ -215,7 +215,7 @@ echo "Database restore complete."
 echo
 
 # —————————————————————————————————————————————————————————————
-# 7. Rebuild local custom images for podman based on rollback version
+# Rebuild local custom images for podman based on rollback version
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	# Try to derive version from the chosen backup filenames
@@ -251,7 +251,7 @@ if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Pull images referenced by restored compose and restart full stack
+# Pull images referenced by restored compose and restart full stack
 # —————————————————————————————————————————————————————————————
 echo "Cleaning up current stack and loading rollback images"
 $CONTAINER_ENGINE system prune -f

@@ -47,7 +47,7 @@ echo "IriusRisk Upgrade Deployment"
 echo "---------------------------------------"
 
 # —————————————————————————————————————————————————————————————
-# 0. Ensure we're in the scripts dir
+# Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_PATH"
@@ -56,7 +56,7 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Set engine and Postgres options
+# Set engine and Postgres options
 # —————————————————————————————————————————————————————————————
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
@@ -75,7 +75,7 @@ SAML_ENABLED=""
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
 
 # —————————————————————————————————————————————————————————————
-# 2. Pre-upgrade health/version (best-effort)
+# Pre-upgrade health/version (best-effort)
 # —————————————————————————————————————————————————————————————
 PREV_VERSION="unknown"
 read -r pre_code pre_json < <(fetch_health)
@@ -86,7 +86,7 @@ printf '%s\n' "$PREV_VERSION" >/tmp/iriusrisk_previous_version.txt || true
 echo "Detected current IriusRisk version (pre-upgrade): $PREV_VERSION"
 
 # —————————————————————————————————————————————————————————————
-# 3. Discover highest tomcat tag (Hub API v2, private repo) & choose version
+# Discover highest tomcat tag (Hub API v2, private repo) & choose version
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
 	REPO_NS="continuumsecurity"
@@ -172,7 +172,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Decide SAML handling based on version boundary and file existence
+# Decide SAML handling based on version boundary and file existence
 # —————————————————————————————————————————————————————————————
 LEGACY_SAML_PRESENT="n"
 if saml_files_exist; then LEGACY_SAML_PRESENT="y"; fi
@@ -214,7 +214,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 5. Build compose override (now that SAML decision is made)
+# Build compose override (now that SAML decision is made)
 # —————————————————————————————————————————————————————————————
 COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
 
@@ -224,7 +224,7 @@ COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
 backup_db
 
 # —————————————————————————————————————————————————————————————
-# 7. Backup original compose files + certificates + SAML files (if any)
+# Backup original compose files + certificates + SAML files (if any)
 # —————————————————————————————————————————————————————————————
 # Assumes: COMPOSE_DIR, BDIR, VERSION, TS set
 TMP_COMPOSE_TAR="/tmp/irius.compose.$TS.tar.gz"
@@ -248,7 +248,7 @@ C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
 echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 
 # —————————————————————————————————————————————————————————————
-# 8. Backup original container images (offline mode only)
+# Backup original container images (offline mode only)
 # —————————————————————————————————————————————————————————————
 
 if [ "$OFFLINE" -eq 1 ]; then
@@ -283,7 +283,7 @@ if [ "$OFFLINE" -eq 1 ]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 9. Migrate legacy Podman services → single user unit (pre-change)
+# Migrate legacy Podman services → single user unit (pre-change)
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" ]]; then
 	# Detect if any legacy user services are present (enabled/running) or unit files exist.
@@ -302,7 +302,7 @@ if [[ $CONTAINER_ENGINE == "podman" ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 10. Update compose tomcat tag (docker) or note podman build
+# Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
 	# Update ONLY Tomcat line (matches major-only or full semver; docker.io prefix optional)
@@ -320,7 +320,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 11. Update Startleft & Reporting Module tags from /versions/<ver>.json
+# Update Startleft & Reporting Module tags from /versions/<ver>.json
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
 	VERSIONS_DIR="$SCRIPT_PATH/../versions"
@@ -339,7 +339,7 @@ if [ "$OFFLINE" -eq 0 ]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 12. Rebuild local base images for podman (if applicable)
+# Rebuild local base images for podman (if applicable)
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	container_registry_login
@@ -347,7 +347,7 @@ if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 13. Update the stack
+# Update the stack
 # —————————————————————————————————————————————————————————————
 echo "Cleaning up current stack and loading latest images"
 
@@ -376,7 +376,7 @@ $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d
 echo "Stack restarted with latest images"
 
 # —————————————————————————————————————————————————————————————
-# 14. Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
+# Post-upgrade health wait (≤ 60 min) and conditional SAML cleanup
 # —————————————————————————————————————————————————————————————
 echo
 echo "Waiting for IriusRisk to become healthy (up to 60 minutes)..."

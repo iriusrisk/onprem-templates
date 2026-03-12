@@ -82,6 +82,7 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
    - Launch `one-click.sh`
 
 3. **Answer interactive prompts**:
+   - Select container registry (default or custom)
    - Decide how to set up PostgreSQL (internal container or external DB)
    - Provide hostname
    - Confirm deployment
@@ -344,6 +345,164 @@ To migrate an existing IriusRisk on-prem installation to the new template-based 
   export TMPDIR=${XDG_RUNTIME_DIR}
   ```
   Log out and back in to pick this up.
+
+---
+
+## Container Registry Configuration
+
+The deployment supports both the default IriusRisk container registry and custom container registries.
+
+During installation you will be prompted to select the image source:
+
+1) Default IriusRisk registry  
+2) Custom registry
+
+### Default Registry
+
+If the default registry is selected, images are pulled from:
+
+docker.io/continuumsecurity/iriusrisk-prod
+
+Example images:
+
+docker.io/continuumsecurity/iriusrisk-prod:nginx  
+docker.io/continuumsecurity/iriusrisk-prod:tomcat-4  
+docker.io/continuumsecurity/iriusrisk-prod:startleft  
+docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+
+### Custom Registry
+
+If a custom registry is selected, the installer will ask for:
+
+- Registry URL
+- Image repository path
+- Registry username
+- Registry password/token
+
+Example configuration:
+
+Registry URL:
+docker.io
+
+Repository path:
+myorg/iriusrisk-prod
+
+Images will then be resolved as:
+
+docker.io/myorg/iriusrisk-prod:nginx  
+docker.io/myorg/iriusrisk-prod:tomcat-4  
+docker.io/myorg/iriusrisk-prod:startleft  
+docker.io/myorg/iriusrisk-prod:reporting-module
+
+This allows organizations to mirror or host IriusRisk images in their own container registry.
+
+
+## Network Requirements
+
+For fully automated installation, the server must be able to access several external services.
+
+If your environment restricts outbound internet traffic, the following destinations must be allowed.
+
+### Git Repository
+
+Required to download the deployment templates.
+
+https://github.com  
+https://raw.githubusercontent.com
+
+Example usage:
+
+curl https://raw.githubusercontent.com/iriusrisk/onprem-templates/...  
+git clone https://github.com/iriusrisk/onprem-templates.git
+
+---
+
+### Container Registry
+
+Required to download IriusRisk container images.
+
+Default registry:
+
+docker.io  
+registry-1.docker.io  
+auth.docker.io
+
+Example images:
+
+docker.io/continuumsecurity/iriusrisk-prod:nginx  
+docker.io/continuumsecurity/iriusrisk-prod:tomcat-*  
+docker.io/continuumsecurity/iriusrisk-prod:startleft  
+docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+
+If a custom registry is used, access must be allowed to that registry instead.
+
+---
+
+### OS Package Repositories
+
+The installer automatically installs required packages depending on the distribution.
+
+Typical repositories include:
+
+Ubuntu / Debian
+
+archive.ubuntu.com  
+security.ubuntu.com
+
+RHEL / Rocky / AlmaLinux
+
+dl.fedoraproject.org  
+mirrorlist.centos.org
+
+Amazon Linux
+
+amazonlinux.*.amazonaws.com
+
+---
+
+### PostgreSQL Image
+
+If internal PostgreSQL is used, the following image is downloaded:
+
+docker.io/library/postgres:15.4
+
+---
+
+### Optional External Services
+
+If you configure external PostgreSQL or custom container registries, network access must be allowed accordingly.
+
+---
+
+### Fully Air-Gapped Environments
+
+If outbound internet access is not allowed, deployment can still be performed by:
+
+- Mirroring container images in an internal registry
+- Cloning this repository internally
+- Using internal OS package mirrors
+
+---
+
+## Supported Operating Systems
+
+The deployment scripts are designed for **RHEL 9–based Linux distributions**.
+
+The following environments are currently supported and tested:
+
+- **RHEL 9**
+- **Rocky Linux 9.7**
+- **Amazon Linux 2023**
+- **Ubuntu 22.04**
+
+Other **RHEL 9 compatible distributions** (such as AlmaLinux 9) may also work but have not been explicitly tested.
+
+> ⚠️ RHEL/Rocky **10 and newer releases are not currently supported**.
+
+The installation automatically detects the container engine and will use:
+
+- **Podman** on RHEL-based systems
+- **Docker** on Ubuntu systems
 
 ---
 

@@ -670,9 +670,9 @@ fi
 
 exec "$@"
 EOF
-chmod 0755 /usr/local/bin/podman-secret-wrapper.sh"
+	chmod 0755 /usr/local/bin/podman-secret-wrapper.sh"
 
-	local commit_args=(--change='ENTRYPOINT ["/usr/local/bin/podman-secret-wrapper.sh"]')
+	local commit_args=(--change='ENTRYPOINT ["/bin/sh", "/usr/local/bin/podman-secret-wrapper.sh"]')
 	if [[ -n $run_as_user ]]; then
 		commit_args+=(--change="USER ${run_as_user}")
 	fi

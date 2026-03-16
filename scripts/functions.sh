@@ -604,6 +604,7 @@ function build_podman_secret_image() {
 	local setup_snippet="${6:-}"
 	local run_as_user="${7:-}"
 	local commit_cmd="${8:-}"
+	local wrapper_file final_exec_file
 
 	local original_entrypoint_json original_cmd_json original_entrypoint_exec
 	original_entrypoint_json="$(podman image inspect --format '{{json .Config.Entrypoint}}' "$base_image" 2>/dev/null || echo null)"
@@ -626,13 +627,52 @@ PY2
 		return 1
 	fi
 
+	wrapper_file="$(mktemp)"
+	cat >"$wrapper_file" <<EOF
+#!/usr/bin/env sh
+set -eu
+
+export_from_secret() {
+  var_name="\$1"
+  cipher="\$2"
+  priv="\$3"
+  if [ -r "\$cipher" ] && [ -r "\$priv" ]; then
+    gpg --batch --import "\$priv" >/dev/null 2>&1 || true
+    value="\$(gpg --batch --yes --decrypt "\$cipher" 2>/dev/null || true)"
+    if [ -n "\$value" ]; then
+      export "\$var_name=\$value"
+    fi
+  fi
+}
+
+${secret_snippet}
+EOF
+	if [[ -n $final_exec ]]; then
+		cat >>"$wrapper_file" <<'EOF'
+
+if [ -r /usr/local/bin/podman-secret-final-exec ]; then
+  exec /bin/sh -c "$(cat /usr/local/bin/podman-secret-final-exec)" -- "$@"
+fi
+EOF
+	elif [[ -n $original_entrypoint_exec ]]; then
+		printf '
+exec %s "$@"
+' "$original_entrypoint_exec" >>"$wrapper_file"
+	else
+		printf '
+exec "$@"
+' >>"$wrapper_file"
+	fi
+
 	podman rm -f "$tmp_name" 2>/dev/null || true
-	podman run \
+	podman create \
 		--name "$tmp_name" \
 		--user root \
 		--entrypoint /bin/sh \
 		"$base_image" \
-		-c "set -eu; \
+		-c 'sleep infinity' >/dev/null
+	podman start "$tmp_name" >/dev/null
+	podman exec "$tmp_name" /bin/sh -c "set -eu; \
 		if [ -f /etc/alpine-release ]; then \
 			apk add --no-cache gnupg python3; \
 		else \
@@ -641,38 +681,21 @@ PY2
 			rm -rf /var/lib/apt/lists/*; \
 		fi; \
 		${setup_snippet:-:}; \
-		cat <<'EOF' > /usr/local/bin/podman-secret-wrapper.sh
-#!/bin/sh
-set -eu
+		mkdir -p /usr/local/bin"
+	podman cp "$wrapper_file" "$tmp_name:/usr/local/bin/podman-secret-wrapper.sh"
+	if [[ -n $final_exec ]]; then
+		final_exec_file="$(mktemp)"
+		printf '%s
+' "$final_exec" >"$final_exec_file"
+		podman cp "$final_exec_file" "$tmp_name:/usr/local/bin/podman-secret-final-exec"
+		podman exec "$tmp_name" chmod +x /usr/local/bin/podman-secret-final-exec
+		rm -f "$final_exec_file"
+	fi
+	podman exec "$tmp_name" chmod +x /usr/local/bin/podman-secret-wrapper.sh
+	podman stop "$tmp_name" >/dev/null
+	rm -f "$wrapper_file"
 
-export_from_secret() {
-  var_name="$1"
-  cipher="$2"
-  priv="$3"
-  if [ -r "$cipher" ] && [ -r "$priv" ]; then
-    gpg --batch --import "$priv" >/dev/null 2>&1 || true
-    value="$(gpg --batch --yes --decrypt "$cipher" 2>/dev/null || true)"
-    if [ -n "$value" ]; then
-      export "$var_name=$value"
-    fi
-  fi
-}
-
-${secret_snippet}
-
-if [ -n "${final_exec}" ]; then
-  exec /bin/sh -c '${final_exec}' -- "$@"
-fi
-
-if [ -n "${original_entrypoint_exec}" ]; then
-  exec ${original_entrypoint_exec} "$@"
-fi
-
-exec "$@"
-EOF
-	chmod 0755 /usr/local/bin/podman-secret-wrapper.sh"
-
-	local commit_args=(--change='ENTRYPOINT ["/bin/sh", "/usr/local/bin/podman-secret-wrapper.sh"]')
+	local commit_args=(--change='ENTRYPOINT ["/usr/local/bin/podman-secret-wrapper.sh"]')
 	if [[ -n $run_as_user ]]; then
 		commit_args+=(--change="USER ${run_as_user}")
 	fi

@@ -98,9 +98,18 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 	# Update Jeff-specific environment variables
 	sed -i "s|AZURE_ENDPOINT=.*|AZURE_ENDPOINT=$AZURE_ENDPOINT|g" "$JEFF_FILE"
 	sed -i "s|AZURE_API_KEY=.*|AZURE_API_KEY=$AZURE_API_KEY|g" "$JEFF_FILE"
-	sed -i "s|GEMINI_ENDPOINT=.*|GEMINI_ENDPOINT=$GEMINI_ENDPOINT|g" "$JEFF_FILE"
+	sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$AZURE_ENDPOINT|g" "$JEFF_FILE"
+	sed -i "s|AZURE_OPENAI_API_KEY=.*|AZURE_OPENAI_API_KEY=$AZURE_API_KEY|g" "$JEFF_FILE"
+	sed -i "s|GEMINI_API_BASE=.*|GEMINI_API_BASE=$GEMINI_ENDPOINT|g" "$JEFF_FILE"
 	sed -i "s|GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|g" "$JEFF_FILE"
-	sed -i "s|REDIS_PASSWORD=.*|REDIS_PASSWORD=$REDIS_PASSWORD|g" "$JEFF_FILE"
+
+	escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\]/\\&/g')
+
+	# Replace quoted placeholder
+	sed -i "s|\"\${REDIS_PASSWORD}\"|\"$escaped_redis_password\"|g" "$JEFF_FILE"
+
+	# Replace unquoted placeholder
+	sed -i "s|\${REDIS_PASSWORD}|$escaped_redis_password|g" "$JEFF_FILE"
 
 	echo "Updated $JEFF_FILE"
 fi

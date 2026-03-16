@@ -152,16 +152,16 @@ if [ "$OFFLINE" -eq 0 ]; then
 	JEFF_ENABLED=$(prompt_yn "Set up Jeff AI assistant?")
 fi
 
+export CONTAINER_ENGINE
+export JEFF_ENABLED
+
 # —————————————————————————————————————————————————————————————
 # Run setup-wizard
 # —————————————————————————————————————————————————————————————
 echo
 echo "Launching the setup wizard..."
 set +e
-CONTAINER_ENGINE="$CONTAINER_ENGINE" \
-	USE_INTERNAL_PG="$USE_INTERNAL_PG" \
-	JEFF_ENABLED="$JEFF_ENABLED" \
-	./setup-wizard.sh
+./setup-wizard.sh
 set -e
 
 echo

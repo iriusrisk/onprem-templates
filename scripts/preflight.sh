@@ -24,6 +24,7 @@ prompt_engine
 
 OVERRIDE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
 COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+JEFF_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
 
 # —————————————————————————————————————————————————————————————
 # Check OS type
@@ -277,14 +278,14 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 			echo "AZURE_API_KEY is set"
 		fi
 
-		GEMINI_ENDPOINT_VALUE=$(grep 'GEMINI_ENDPOINT=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_ENDPOINT=//;s/"//g' | xargs)
-		if [[ -z $GEMINI_ENDPOINT_VALUE || $GEMINI_ENDPOINT_VALUE == '${GEMINI_ENDPOINT}' ]]; then
-			msg="WARNING: GEMINI_ENDPOINT must be set to a real value in $JEFF_FILE when Jeff is enabled"
+		GEMINI_ENDPOINT_VALUE=$(grep 'GEMINI_API_BASE=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_BASE=//;s/"//g' | xargs)
+		if [[ -z $GEMINI_ENDPOINT_VALUE || $GEMINI_ENDPOINT_VALUE == '${GEMINI_API_BASE}' ]]; then
+			msg="WARNING: GEMINI_API_BASE must be set to a real value in $JEFF_FILE when Jeff is enabled"
 			echo "$msg"
 			WARNINGS+=("$msg")
 			JEFF_VALUES_FILLED=0
 		else
-			echo "GEMINI_ENDPOINT: $GEMINI_ENDPOINT_VALUE"
+			echo "GEMINI_API_BASE: $GEMINI_ENDPOINT_VALUE"
 		fi
 
 		GEMINI_API_KEY_VALUE=$(grep 'GEMINI_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_KEY=//;s/"//g' | xargs)
@@ -337,6 +338,25 @@ if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
 	fi
 else
 	echo "Postgres connectivity check skipped due to unmodified IRIUS_DB_URL."
+fi
+
+# —————————————————————————————————————————————————————————————
+# Jeff connectivity check (if applicable)
+# —————————————————————————————————————————————————————————————
+
+echo "DEBUG: JEFF_ENABLED=[$JEFF_ENABLED]"
+echo "DEBUG: AZURE_ENDPOINT=[$AZURE_ENDPOINT_VALUE]"
+echo "DEBUG: GEMINI_ENDPOINT=[$GEMINI_ENDPOINT_VALUE]"
+echo "DEBUG: AZURE_API_KEY set? [$([[ -n $AZURE_API_KEY_VALUE ]] && echo yes || echo no)]"
+echo "DEBUG: GEMINI_API_KEY set? [$([[ -n $GEMINI_API_KEY_VALUE ]] && echo yes || echo no)]"
+
+if [[ $JEFF_ENABLED == "y" && $JEFF_VALUES_FILLED -eq 1 ]]; then
+	echo "Checking Azure and Gemini API connectivity..."
+
+	check_gemini_api "$GEMINI_ENDPOINT_VALUE" "$GEMINI_API_KEY_VALUE"
+	check_azure_endpoint "$AZURE_ENDPOINT_VALUE" "$AZURE_API_KEY_VALUE"
+else
+	echo "Azure/Gemini connectivity checks skipped."
 fi
 
 # —————————————————————————————————————————————————————————————

@@ -1173,9 +1173,6 @@ function die() {
 	exit 2
 }
 
-# Trim spaces
-function trim() { sed -E 's/^[[:space:]]+|[[:space:]]+$//g'; }
-
 # Replace just the VALUE part of a YAML env list line:
 #   "      - KEY=anything"  ->  "      - KEY=<value>"
 # Preserves the indent and "- KEY=" prefix.
@@ -1655,4 +1652,74 @@ function save_local_with_fullref() {
 	skopeo copy --insecure-policy \
 		"containers-storage:$ref" \
 		"oci-archive:$BDIR/images/$fname:$ref"
+}
+
+# —————————————————————————————————————————————————————————————
+# Jeff functions
+# —————————————————————————————————————————————————————————————
+
+check_gemini_api() {
+	local endpoint="$1"
+	local api_key="$2"
+	local tmp_out status
+
+	tmp_out=$(mktemp)
+
+	status=$(curl -sS -o "$tmp_out" -w "%{http_code}" \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $api_key" \
+		-X POST \
+		-d '{
+			"model": "gemini-2.5-flash",
+			"messages": [
+				{"role": "user", "content": "Reply with exactly OK"}
+			],
+			"max_tokens": 5
+		}' \
+		"${endpoint%/}/chat/completions")
+
+	if [[ $status == "200" ]]; then
+		echo "Gemini API connectivity OK"
+	else
+		msg="ERROR: Gemini API check failed (HTTP $status). Check GEMINI_ENDPOINT and GEMINI_API_KEY"
+		echo "$msg"
+		ERRORS+=("$msg")
+		echo "Gemini response snippet:"
+		head -c 300 "$tmp_out"
+		echo
+	fi
+
+	rm -f "$tmp_out"
+}
+
+check_azure_endpoint() {
+	local endpoint="$1"
+	local api_key="$2"
+	local tmp_out status
+
+	tmp_out=$(mktemp)
+
+	status=$(curl -sS -o "$tmp_out" -w "%{http_code}" \
+		-H "api-key: $api_key" \
+		-I \
+		"${endpoint%/}/")
+
+	case "$status" in
+		200 | 204 | 301 | 302 | 401 | 403 | 404)
+			echo "Azure endpoint reachable at $endpoint"
+			echo "Azure check is partial only: deployment-level inference cannot be tested without deployment name"
+			;;
+		000)
+			msg="ERROR: Could not reach Azure endpoint at $endpoint (DNS/TLS/network failure)"
+			echo "$msg"
+			ERRORS+=("$msg")
+			;;
+		*)
+			msg="WARNING: Azure endpoint probe returned HTTP $status at $endpoint"
+			echo "$msg"
+			WARNINGS+=("$msg")
+			;;
+	esac
+
+	rm -f "$tmp_out"
 }

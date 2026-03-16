@@ -85,11 +85,12 @@ fi
 printf '%s\n' "$PREV_VERSION" >/tmp/iriusrisk_previous_version.txt || true
 echo "Detected current IriusRisk version (pre-upgrade): $PREV_VERSION"
 
+prompt_registry_settings
+
 # —————————————————————————————————————————————————————————————
 # 3. Registry settings + discover highest tomcat tag when applicable
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
-	prompt_registry_settings
 
 	COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
 	[[ -f $COMPOSE_YML ]] || {
@@ -265,15 +266,14 @@ echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 
 if [ "$OFFLINE" -eq 1 ]; then
 	copy_with_fullref "$(image_ref "startleft")" \
-		startleft.oci.tar
+		"$(image_ref "startleft" | sed 's#/#_#g; s#:#_#g').oci.tar"
 
 	copy_with_fullref "$(image_ref "reporting-module")" \
-		reporting-module.oci.tar
+		"$(image_ref "reporting-module" | sed 's#/#_#g; s#:#_#g').oci.tar"
 
 	# Ensure your local custom images exist
-	# nginx:
 	podman image exists localhost/nginx-rhel:latest || die "Missing image: localhost/nginx-rhel:latest"
-	# tomcat: ensure we have :latest (retag if only versioned exists)
+
 	if ! podman image exists localhost/tomcat-rhel:latest; then
 		if podman image exists "localhost/tomcat-rhel:tomcat-$TOMCAT_V"; then
 			echo "Retagging localhost/tomcat-rhel:tomcat-$TOMCAT_V -> localhost/tomcat-rhel:latest"
@@ -282,10 +282,9 @@ if [ "$OFFLINE" -eq 1 ]; then
 			die "Missing image: localhost/tomcat-rhel:(latest or tomcat-$TOMCAT_V)"
 		fi
 	fi
-	# postgres:
+
 	podman image exists localhost/postgres-gpg:15.4 || die "Missing image: localhost/postgres-gpg:15.4"
 
-	# Save local custom images with embedded refs
 	save_local_with_fullref localhost/nginx-rhel:latest localhost_nginx-rhel.oci.tar
 	save_local_with_fullref localhost/tomcat-rhel:latest localhost_tomcat-rhel.oci.tar
 	save_local_with_fullref localhost/postgres-gpg:15.4 localhost_postgres-gpg_15.4.oci.tar
@@ -317,16 +316,13 @@ fi
 # 10. Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
-	registry_url_escaped=$(printf '%s' "${REGISTRY_URL:-docker.io}" | sed 's/[.[\*^$()+?{|]/\\&/g')
-	registry_ns_escaped=$(printf '%s' "${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}" | sed 's/[.[\*^$()+?{|]/\\&/g')
-
-	if grep -qE "^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:tomcat-[0-9.]+([[:space:]]|$)" "$COMPOSE_YML"; then
+	if grep -qE '^[[:space:]]*image:[[:space:]]*\$\{REGISTRY_URL:-docker\.io\}/\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-[0-9.]+' "$COMPOSE_YML"; then
 		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
+			"s@(^[[:space:]]*image:[[:space:]]*\\\$\{REGISTRY_URL:-docker\.io\}/\\\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
 			"$COMPOSE_YML"
-		echo "Updated tomcat image tag → ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:tomcat-${CHOSEN_VERSION}"
+		echo "Updated tomcat image tag → \${REGISTRY_URL:-docker.io}/\${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:tomcat-${CHOSEN_VERSION}"
 	else
-		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
+		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected variable-based ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
 		exit 5
 	fi
 else

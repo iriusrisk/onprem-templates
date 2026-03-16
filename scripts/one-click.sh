@@ -35,6 +35,8 @@ set -- "${ARGS[@]:-}"
 
 export OFFLINE OFFLINE_BUNDLE_DIR
 
+prompt_registry_settings
+
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————
@@ -137,10 +139,6 @@ elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 else
 	echo "Unknown container engine: $CONTAINER_ENGINE"
 	exit 1
-fi
-
-if [ "$OFFLINE" -eq 0 ]; then
-	prompt_registry_settings
 fi
 
 prompt_postgres_option setup

@@ -642,7 +642,7 @@ PY2
 		fi; \
 		${setup_snippet:-:}; \
 		cat <<'EOF' > /usr/local/bin/podman-secret-wrapper.sh
-#!/usr/bin/env sh
+#!/bin/sh
 set -eu
 
 export_from_secret() {
@@ -670,7 +670,7 @@ fi
 
 exec "$@"
 EOF
-		chmod +x /usr/local/bin/podman-secret-wrapper.sh"
+chmod 0755 /usr/local/bin/podman-secret-wrapper.sh"
 
 	local commit_args=(--change='ENTRYPOINT ["/usr/local/bin/podman-secret-wrapper.sh"]')
 	if [[ -n $run_as_user ]]; then

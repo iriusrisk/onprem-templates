@@ -256,53 +256,12 @@ function install_and_configure_postgres() {
 		sg docker -c "$compose_tool -f $(basename "$postgres_file") up -d postgres"
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		local compose_tool="podman-compose"
-		# Build/refresh a tiny postgres image that decrypts at runtime (no plaintext on disk)
-		local base_image="docker.io/library/postgres:15.4"
-		local patched_image="localhost/postgres-gpg:15.4"
-		local tmp_name="temp-postgres"
 
 		# Create and encrypt db pass secret
 		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
 
 		if [[ $OFFLINE -eq 0 ]]; then
-			podman rm -f "$tmp_name" 2>/dev/null || true
-
-			podman run \
-				--name "$tmp_name" \
-				--user root \
-				--entrypoint /bin/sh \
-				"$base_image" \
-				-c "\
-            set -eu; \
-            # install gnupg
-            if [ -f /etc/alpine-release ]; then \
-                apk add --no-cache gnupg; \
-            else \
-                apt-get update && \
-                apt-get install -y --no-install-recommends gnupg && \
-                rm -rf /var/lib/apt/lists/*; \
-            fi; \
-            # write our expand-db-url script
-            cat << 'EOF' > /usr/local/bin/pg-expand-secret.sh
-#!/usr/bin/env sh
-set -eu
-# Import the private key and decrypt the DB password
-gpg --batch --import /run/secrets/db_privkey
-DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-
-# Append it to the URL and hand off to the real entrypoint
-export POSTGRES_PASSWORD=\"\${DECRYPTED}\"
-exec docker-entrypoint.sh \"\$@\"
-EOF
-        chmod +x /usr/local/bin/pg-expand-secret.sh; \
-"
-
-			podman commit \
-				--change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
-				--change='CMD ["postgres"]' \
-				"$tmp_name" "$patched_image"
-
-			podman rm "$tmp_name"
+			build_podman_secret_image "docker.io/library/postgres:15.4" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret POSTGRES_PASSWORD /run/secrets/db_pwd /run/secrets/db_privkey' 'docker-entrypoint.sh "$@"'
 		fi
 
 		# --- Graceful down then hard teardown for a clean slate ---
@@ -590,20 +549,30 @@ function check_file() {
 }
 
 function build_compose_override() {
-	local enable_saml use_internal_pg
-	enable_saml="${1:-}"
-	use_internal_pg="${2:-}"
+	local enable_saml=""
+	local use_internal_pg=""
+	local enable_jeff="${JEFF_ENABLED:-n}"
+
+	case $# in
+		0) ;;
+		1)
+			# Back-compat: a single argument means the internal Postgres flag.
+			use_internal_pg="$1"
+			;;
+		2)
+			enable_saml="$1"
+			use_internal_pg="$2"
+			;;
+		*)
+			enable_saml="$1"
+			use_internal_pg="$2"
+			enable_jeff="$3"
+			;;
+	esac
 
 	local base_files="-f $CONTAINER_ENGINE-compose.yml -f $CONTAINER_ENGINE-compose.override.yml"
 	local files="$base_files"
 
-	# If only one arg is provided, interpret it as the Postgres flag (back-compat)
-	if [[ -z $use_internal_pg && -n $enable_saml ]]; then
-		use_internal_pg="$enable_saml"
-		enable_saml=""
-	fi
-
-	# Normalize and include optional overrides
 	shopt -s nocasematch
 	case "$enable_saml" in
 		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.saml.yml" ;;
@@ -611,9 +580,111 @@ function build_compose_override() {
 	case "$use_internal_pg" in
 		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.postgres.yml" ;;
 	esac
+	case "$enable_jeff" in
+		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.jeff.yml" ;;
+	esac
 	shopt -u nocasematch
 
 	echo "$files"
+}
+
+function podman_secret_to_env_snippet() {
+	local var_name="$1"
+	local cipher="$2"
+	local priv="$3"
+	printf 'export_from_secret %s %s %s' "$var_name" "$cipher" "$priv"
+}
+
+function build_podman_secret_image() {
+	local base_image="$1"
+	local tmp_name="$2"
+	local target_image="$3"
+	local secret_snippet="${4:-}"
+	local final_exec="${5:-}"
+	local setup_snippet="${6:-}"
+	local run_as_user="${7:-}"
+	local commit_cmd="${8:-}"
+
+	local original_entrypoint_json original_cmd_json original_entrypoint_exec
+	original_entrypoint_json="$(podman image inspect --format '{{json .Config.Entrypoint}}' "$base_image" 2>/dev/null || echo null)"
+	original_cmd_json="$(podman image inspect --format '{{json .Config.Cmd}}' "$base_image" 2>/dev/null || echo null)"
+
+	if command -v python3 >/dev/null 2>&1; then
+		original_entrypoint_exec="$(
+			python3 - "$original_entrypoint_json" <<'PY2'
+import json, shlex, sys
+raw = sys.argv[1]
+if raw in ('', 'null', 'None'):
+    print('')
+else:
+    arr = json.loads(raw)
+    print(' '.join(shlex.quote(str(x)) for x in arr))
+PY2
+		)"
+	else
+		echo "ERROR: python3 is required to inspect and preserve Podman image entrypoints." >&2
+		return 1
+	fi
+
+	podman rm -f "$tmp_name" 2>/dev/null || true
+	podman run \
+		--name "$tmp_name" \
+		--user root \
+		--entrypoint /bin/sh \
+		"$base_image" \
+		-c "set -eu; \
+		if [ -f /etc/alpine-release ]; then \
+			apk add --no-cache gnupg python3; \
+		else \
+			apt-get update && \
+			apt-get install -y --no-install-recommends gnupg python3 && \
+			rm -rf /var/lib/apt/lists/*; \
+		fi; \
+		${setup_snippet:-:}; \
+		cat <<'EOF' > /usr/local/bin/podman-secret-wrapper.sh
+#!/usr/bin/env sh
+set -eu
+
+export_from_secret() {
+  var_name="$1"
+  cipher="$2"
+  priv="$3"
+  if [ -r "$cipher" ] && [ -r "$priv" ]; then
+    gpg --batch --import "$priv" >/dev/null 2>&1 || true
+    value="$(gpg --batch --yes --decrypt "$cipher" 2>/dev/null || true)"
+    if [ -n "$value" ]; then
+      export "$var_name=$value"
+    fi
+  fi
+}
+
+${secret_snippet}
+
+if [ -n "${final_exec}" ]; then
+  exec /bin/sh -c '${final_exec}' -- "$@"
+fi
+
+if [ -n "${original_entrypoint_exec}" ]; then
+  exec ${original_entrypoint_exec} "$@"
+fi
+
+exec "$@"
+EOF
+		chmod +x /usr/local/bin/podman-secret-wrapper.sh"
+
+	local commit_args=(--change='ENTRYPOINT ["/usr/local/bin/podman-secret-wrapper.sh"]')
+	if [[ -n $run_as_user ]]; then
+		commit_args+=(--change="USER ${run_as_user}")
+	fi
+	if [[ $original_cmd_json != "null" && -n $original_cmd_json ]]; then
+		commit_args+=(--change="CMD ${original_cmd_json}")
+	fi
+	if [[ -n $commit_cmd ]]; then
+		commit_args+=(--change="CMD ${commit_cmd}")
+	fi
+
+	podman commit "${commit_args[@]}" "$tmp_name" "$target_image" >/dev/null
+	podman rm -f "$tmp_name" >/dev/null || true
 }
 
 # Build/refresh custom podman images used by podman-compose.yml
@@ -624,8 +695,7 @@ function build_podman_custom_images() {
 
 	echo "Preparing custom images for version: tomcat-${tv}"
 
-	# Clean any temp containers
-	podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
+	podman rm -f temp-nginx temp-tomcat temp-postgres temp-jeff temp-rag temp-ash temp-haven temp-redis 2>/dev/null || true
 
 	if [ "$OFFLINE" -eq 0 ]; then
 		echo "Pulling base images..."
@@ -634,76 +704,79 @@ function build_podman_custom_images() {
 			echo "ERROR: Unable to pull docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >&2
 			return 1
 		}
+		podman pull docker.io/library/postgres:15.4 >/dev/null
+		if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-jeff-4.6.2 >/dev/null
+			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-rag-1.2.2 >/dev/null
+			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-ash-1.7.0 >/dev/null
+			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-haven-1.0.1 >/dev/null
+			podman pull docker.io/redis/redis-stack:latest >/dev/null
+		fi
 	fi
 
 	echo "Customizing nginx → localhost/nginx-rhel"
-	podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
-		-c "set -eu; \
-        if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
-            (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
-        command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true; \
-        sleep 1"
-	podman commit \
-		--change='USER nginx' \
-		--change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
-		temp-nginx \
-		localhost/nginx-rhel >/dev/null
-	podman rm -f temp-nginx >/dev/null || true
+	build_podman_secret_image \
+		"docker.io/continuumsecurity/iriusrisk-prod:nginx" \
+		"temp-nginx" \
+		"localhost/nginx-rhel" \
+		"" \
+		'nginx -g "daemon off;"' \
+		"command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true" \
+		"nginx"
 
 	echo "Customizing tomcat (base tomcat-${tv}) → localhost/tomcat-rhel"
-	podman run \
-		--name temp-tomcat \
-		--user root \
-		--entrypoint /bin/sh \
+	build_podman_secret_image \
 		"docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" \
-		-c '\
-      set -eu; \
-      if [ -f /etc/alpine-release ]; then \
-          apk add --no-cache gnupg; \
-      else \
-          apt-get update && \
-          apt-get install -y --no-install-recommends gnupg && \
-          rm -rf /var/lib/apt/lists/*; \
-      fi; \
-      cat <<'"'"'EOF'"'"' > /usr/local/bin/expand-secrets.sh
-#!/usr/bin/env sh
-set -eu
+		"temp-tomcat" \
+		"localhost/tomcat-rhel" \
+		$'if [ -r /run/secrets/db_pwd ] && [ -r /run/secrets/db_privkey ]; then\n  gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1 || true\n  dec="$(gpg --batch --yes --decrypt /run/secrets/db_pwd 2>/dev/null || true)"\n  if [ -n "$dec" ]; then\n    export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"\n  fi\nfi\nexport_from_secret KEYSTORE_PASSWORD /run/secrets/keystore_pwd /run/secrets/keystore_privkey\nexport_from_secret KEY_ALIAS_PASSWORD /run/secrets/key_alias_pwd /run/secrets/key_alias_privkey' \
+		'/entrypoint/dynamic-entrypoint.sh "$@"' \
+		"" \
+		"tomcat"
 
-export_from_secret() {
-  var_name="$1"; cipher="$2"; priv="$3"
-  if [ -r "$cipher" ] && [ -r "$priv" ]; then
-    gpg --batch --import "$priv" >/dev/null 2>&1 || true
-    value="$(gpg --batch --yes --decrypt "$cipher" 2>/dev/null || true)"
-    if [ -n "$value" ]; then
-      export "$var_name=$value"
-    fi
-  fi
-}
+	echo "Customizing postgres → localhost/postgres-gpg:15.4"
+	build_podman_secret_image \
+		"docker.io/library/postgres:15.4" \
+		"temp-postgres" \
+		"localhost/postgres-gpg:15.4" \
+		'export_from_secret POSTGRES_PASSWORD /run/secrets/db_pwd /run/secrets/db_privkey' \
+		'docker-entrypoint.sh "$@"'
 
-if [ -r /run/secrets/db_pwd ] && [ -r /run/secrets/db_privkey ]; then
-  gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1 || true
-  if dec="$(gpg --batch --yes --decrypt /run/secrets/db_pwd 2>/dev/null || true)"; then
-    if [ -n "$dec" ]; then
-      export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"
-    fi
-  fi
-fi
+	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		echo "Customizing Jeff-related images with Podman secrets"
+		build_podman_secret_image \
+			"docker.io/continuumsecurity/iriusrisk-prod:ai-jeff-4.6.2" \
+			"temp-jeff" \
+			"localhost/ai-jeff-4.6.2" \
+			"$(podman_secret_to_env_snippet AZURE_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey)"
 
-export_from_secret KEYSTORE_PASSWORD   /run/secrets/keystore_pwd   /run/secrets/keystore_privkey
-export_from_secret KEY_ALIAS_PASSWORD  /run/secrets/key_alias_pwd  /run/secrets/key_alias_privkey
+		build_podman_secret_image \
+			"docker.io/continuumsecurity/iriusrisk-prod:ai-rag-1.2.2" \
+			"temp-rag" \
+			"localhost/ai-rag-1.2.2" \
+			"$(podman_secret_to_env_snippet AZURE_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey)"
 
-exec /entrypoint/dynamic-entrypoint.sh "$@"
-EOF
-      chmod +x /usr/local/bin/expand-secrets.sh; \
-    '
-	podman commit \
-		--change='USER tomcat' \
-		--change='ENTRYPOINT ["/usr/local/bin/expand-secrets.sh"]' \
-		temp-tomcat \
-		localhost/tomcat-rhel >/dev/null
-	podman rm -f temp-tomcat >/dev/null || true
+		build_podman_secret_image \
+			"docker.io/continuumsecurity/iriusrisk-prod:ai-ash-1.7.0" \
+			"temp-ash" \
+			"localhost/ai-ash-1.7.0" \
+			$'export_from_secret GEMINI_API_KEY /run/secrets/gemini_api_key /run/secrets/gemini_api_privkey\nexport_from_secret AZURE_OPENAI_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey'
 
-	echo "Custom images ready: localhost/nginx-rhel, localhost/tomcat-rhel"
+		build_podman_secret_image \
+			"docker.io/continuumsecurity/iriusrisk-prod:ai-haven-1.0.1" \
+			"temp-haven" \
+			"localhost/ai-haven-1.0.1" \
+			$'export_from_secret AZURE_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey\nexport_from_secret REDIS_PASSWORD /run/secrets/redis_password /run/secrets/redis_privkey'
+
+		build_podman_secret_image \
+			"docker.io/redis/redis-stack:latest" \
+			"temp-redis" \
+			"localhost/redis-stack-gpg:latest" \
+			'export_from_secret REDIS_PASSWORD /run/secrets/redis_password /run/secrets/redis_privkey' \
+			'redis-stack-server --requirepass "$REDIS_PASSWORD"'
+	fi
+
+	echo "Custom images ready for Podman deployment"
 }
 
 # Rootless Podman prerequisites + per-boot runtime hardening
@@ -962,6 +1035,44 @@ EOF
 	# Cleanup artifacts and the whole temporary keyring
 	rm -f "$enc_file" "$priv_file"
 	rm -rf "$homedir"
+}
+
+function read_podman_secret_plaintext() {
+	local secret_name="$1"
+	local inspect_json secret_data
+
+	inspect_json="$(podman secret inspect --showsecret "$secret_name" 2>/dev/null || true)"
+	if [[ -n $inspect_json ]] && command -v python3 >/dev/null 2>&1; then
+		secret_data="$(
+			python3 - "$inspect_json" <<'PY2'
+import json, sys, base64
+raw = sys.argv[1]
+try:
+    obj = json.loads(raw)
+    if isinstance(obj, list):
+        obj = obj[0]
+    value = obj.get('SecretData') or obj.get('secret_data')
+    if value:
+        try:
+            print(base64.b64decode(value).decode().strip())
+        except Exception:
+            print(str(value).strip())
+except Exception:
+    pass
+PY2
+		)"
+		if [[ -n $secret_data ]]; then
+			echo "$secret_data"
+			return 0
+		fi
+	fi
+
+	local probe_image="localhost/postgres-gpg:15.4"
+	if ! podman image exists "$probe_image" >/dev/null 2>&1; then
+		probe_image="docker.io/library/postgres:15.4"
+	fi
+
+	podman run --rm --entrypoint /bin/sh --secret "$secret_name" "$probe_image" -c "cat /run/secrets/$secret_name" 2>/dev/null || return 1
 }
 
 # Helper: update image line for a component that may be unversioned or versioned already

@@ -197,61 +197,11 @@ if [[ -n $OVERRIDE_FILE && -f $OVERRIDE_FILE ]]; then
 	else
 		echo "IRIUS_DB_URL: $IRIUS_DB_URL"
 	fi
-
-	if [[ $JEFF_ENABLED == "y" ]]; then
-		echo "Jeff is enabled, checking Jeff-related variables in $OVERRIDE_FILE..."
-
-		IRIUS_AI_URL=$(grep 'IRIUS_AI_URL=' "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_AI_URL=//;s/"//g' | xargs)
-		if [[ -z $IRIUS_AI_URL ]]; then
-			msg="WARNING: IRIUS_AI_URL must be set in $OVERRIDE_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		elif [[ $IRIUS_AI_URL != "http://jeff:8008" ]]; then
-			msg="WARNING: IRIUS_AI_URL must be http://jeff:8008 in $OVERRIDE_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		else
-			echo "IRIUS_AI_URL: $IRIUS_AI_URL"
-		fi
-
-		IRIUS_AI_ASH_URL=$(grep 'IRIUS_AI_ASH_URL=' "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_AI_ASH_URL=//;s/"//g' | xargs)
-		if [[ -z $IRIUS_AI_ASH_URL ]]; then
-			msg="WARNING: IRIUS_AI_ASH_URL must be set in $OVERRIDE_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		elif [[ $IRIUS_AI_ASH_URL != "http://ash:8009" ]]; then
-			msg="WARNING: IRIUS_AI_ASH_URL must be http://ash:8009 in $OVERRIDE_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		else
-			echo "IRIUS_AI_ASH_URL: $IRIUS_AI_ASH_URL"
-		fi
-
-		IRIUS_AI_HAVEN_URL=$(grep 'IRIUS_AI_HAVEN_URL=' "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_AI_HAVEN_URL=//;s/"//g' | xargs)
-		if [[ -z $IRIUS_AI_HAVEN_URL ]]; then
-			msg="WARNING: IRIUS_AI_HAVEN_URL must be set in $OVERRIDE_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		elif [[ $IRIUS_AI_HAVEN_URL != "http://haven:8012" ]]; then
-			msg="WARNING: IRIUS_AI_HAVEN_URL must be http://haven:8012 in $OVERRIDE_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		else
-			echo "IRIUS_AI_HAVEN_URL: $IRIUS_AI_HAVEN_URL"
-		fi
-	fi
 else
-	if [[ -n $OVERRIDE_FILE ]]; then
-		msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"
-		echo "$msg"
-		WARNINGS+=("$msg")
-	fi
+	msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"
+	echo "$msg"
+	WARNINGS+=("$msg")
+	POSTGRES_VALUES_FILLED=0
 fi
 
 if [[ $JEFF_ENABLED == "y" ]]; then
@@ -268,16 +218,6 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 			echo "AZURE_ENDPOINT: $AZURE_ENDPOINT_VALUE"
 		fi
 
-		AZURE_API_KEY_VALUE=$(grep 'AZURE_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*AZURE_API_KEY=//;s/"//g' | xargs)
-		if [[ -z $AZURE_API_KEY_VALUE || $AZURE_API_KEY_VALUE == '${AZURE_API_KEY}' ]]; then
-			msg="WARNING: AZURE_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		else
-			echo "AZURE_API_KEY is set"
-		fi
-
 		GEMINI_ENDPOINT_VALUE=$(grep 'GEMINI_API_BASE=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_BASE=//;s/"//g' | xargs)
 		if [[ -z $GEMINI_ENDPOINT_VALUE || $GEMINI_ENDPOINT_VALUE == '${GEMINI_API_BASE}' ]]; then
 			msg="WARNING: GEMINI_API_BASE must be set to a real value in $JEFF_FILE when Jeff is enabled"
@@ -288,37 +228,73 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 			echo "GEMINI_API_BASE: $GEMINI_ENDPOINT_VALUE"
 		fi
 
-		GEMINI_API_KEY_VALUE=$(grep 'GEMINI_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_KEY=//;s/"//g' | xargs)
-		if [[ -z $GEMINI_API_KEY_VALUE || $GEMINI_API_KEY_VALUE == '${GEMINI_API_KEY}' ]]; then
-			msg="WARNING: GEMINI_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		else
-			echo "GEMINI_API_KEY is set"
-		fi
+		if [[ $CONTAINER_ENGINE == "podman" ]]; then
+			AZURE_API_KEY_VALUE="$(read_podman_secret_plaintext azure_api_key || true)"
+			GEMINI_API_KEY_VALUE="$(read_podman_secret_plaintext gemini_api_key || true)"
+			REDIS_PASSWORD_VALUE="$(read_podman_secret_plaintext redis_password || true)"
 
-		REDIS_PASSWORD_VALUE=$(grep 'REDIS_PASSWORD=' "$JEFF_FILE" | head -1 | sed 's/.*REDIS_PASSWORD=//;s/"//g' | xargs)
-		if [[ -z $REDIS_PASSWORD_VALUE || $REDIS_PASSWORD_VALUE == '${REDIS_PASSWORD}' ]]; then
-			msg="WARNING: REDIS_PASSWORD must be set to a real value in $JEFF_FILE when Jeff is enabled"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
+			if [[ -z $AZURE_API_KEY_VALUE ]]; then
+				msg="WARNING: Podman secret 'azure_api_key' must exist and be readable when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "azure_api_key Podman secret is set"
+			fi
+
+			if [[ -z $GEMINI_API_KEY_VALUE ]]; then
+				msg="WARNING: Podman secret 'gemini_api_key' must exist and be readable when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "gemini_api_key Podman secret is set"
+			fi
+
+			if [[ -z $REDIS_PASSWORD_VALUE ]]; then
+				msg="WARNING: Podman secret 'redis_password' must exist and be readable when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "redis_password Podman secret is set"
+			fi
 		else
-			echo "REDIS_PASSWORD is set"
+			AZURE_API_KEY_VALUE=$(grep 'AZURE_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*AZURE_API_KEY=//;s/"//g' | xargs)
+			if [[ -z $AZURE_API_KEY_VALUE || $AZURE_API_KEY_VALUE == '${AZURE_API_KEY}' ]]; then
+				msg="WARNING: AZURE_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "AZURE_API_KEY is set"
+			fi
+
+			GEMINI_API_KEY_VALUE=$(grep 'GEMINI_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_KEY=//;s/"//g' | xargs)
+			if [[ -z $GEMINI_API_KEY_VALUE || $GEMINI_API_KEY_VALUE == '${GEMINI_API_KEY}' ]]; then
+				msg="WARNING: GEMINI_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "GEMINI_API_KEY is set"
+			fi
+
+			REDIS_PASSWORD_VALUE=$(grep 'REDIS_PASSWORD=' "$JEFF_FILE" | head -1 | sed 's/.*REDIS_PASSWORD=//;s/"//g' | xargs)
+			if [[ -z $REDIS_PASSWORD_VALUE || $REDIS_PASSWORD_VALUE == '${REDIS_PASSWORD}' ]]; then
+				msg="WARNING: REDIS_PASSWORD must be set to a real value in $JEFF_FILE when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "REDIS_PASSWORD is set"
+			fi
 		fi
 	else
-		if [[ -n $JEFF_FILE ]]; then
-			msg="WARNING: $JEFF_FILE not found (required when Jeff is enabled)"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		else
-			msg="WARNING: JEFF_FILE is not set (required when Jeff is enabled)"
-			echo "$msg"
-			WARNINGS+=("$msg")
-			JEFF_VALUES_FILLED=0
-		fi
+		msg="WARNING: $JEFF_FILE not found (required when Jeff is enabled)"
+		echo "$msg"
+		WARNINGS+=("$msg")
+		JEFF_VALUES_FILLED=0
 	fi
 fi
 
@@ -352,7 +328,6 @@ echo "DEBUG: GEMINI_API_KEY set? [$([[ -n $GEMINI_API_KEY_VALUE ]] && echo yes |
 
 if [[ $JEFF_ENABLED == "y" && $JEFF_VALUES_FILLED -eq 1 ]]; then
 	echo "Checking Azure and Gemini API connectivity..."
-
 	check_gemini_api "$GEMINI_ENDPOINT_VALUE" "$GEMINI_API_KEY_VALUE"
 	check_azure_endpoint "$AZURE_ENDPOINT_VALUE" "$AZURE_API_KEY_VALUE"
 else

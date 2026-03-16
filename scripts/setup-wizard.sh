@@ -95,21 +95,32 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 	echo "Generating random Redis password for Jeff setup."
 	REDIS_PASSWORD="$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)"
 	echo "Updating $JEFF_FILE"
-	# Update Jeff-specific environment variables
+
+	# Endpoints remain in the compose file for both engines.
 	sed -i "s|AZURE_ENDPOINT=.*|AZURE_ENDPOINT=$AZURE_ENDPOINT|g" "$JEFF_FILE"
-	sed -i "s|AZURE_API_KEY=.*|AZURE_API_KEY=$AZURE_API_KEY|g" "$JEFF_FILE"
 	sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$AZURE_ENDPOINT|g" "$JEFF_FILE"
-	sed -i "s|AZURE_OPENAI_API_KEY=.*|AZURE_OPENAI_API_KEY=$AZURE_API_KEY|g" "$JEFF_FILE"
 	sed -i "s|GEMINI_API_BASE=.*|GEMINI_API_BASE=$GEMINI_ENDPOINT|g" "$JEFF_FILE"
-	sed -i "s|GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|g" "$JEFF_FILE"
 
-	escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\]/\\&/g')
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
+		# Docker keeps credentials in the compose file as before.
+		sed -i "s|AZURE_API_KEY=.*|AZURE_API_KEY=$AZURE_API_KEY|g" "$JEFF_FILE"
+		sed -i "s|AZURE_OPENAI_API_KEY=.*|AZURE_OPENAI_API_KEY=$AZURE_API_KEY|g" "$JEFF_FILE"
+		sed -i "s|GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|g" "$JEFF_FILE"
 
-	# Replace quoted placeholder
-	sed -i "s|\"\${REDIS_PASSWORD}\"|\"$escaped_redis_password\"|g" "$JEFF_FILE"
+		escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\]/\\&/g')
+		sed -i "s|\"\${REDIS_PASSWORD}\"|\"$escaped_redis_password\"|g" "$JEFF_FILE"
+		sed -i "s|\${REDIS_PASSWORD}|$escaped_redis_password|g" "$JEFF_FILE"
+	else
+		# Podman stores sensitive values as Podman secrets, not in compose.
+		sed -i '/AZURE_API_KEY=/d' "$JEFF_FILE"
+		sed -i '/AZURE_OPENAI_API_KEY=/d' "$JEFF_FILE"
+		sed -i '/GEMINI_API_KEY=/d' "$JEFF_FILE"
+		sed -i '/REDIS_PASSWORD=/d' "$JEFF_FILE"
 
-	# Replace unquoted placeholder
-	sed -i "s|\${REDIS_PASSWORD}|$escaped_redis_password|g" "$JEFF_FILE"
+		encrypt_and_store_secret "$AZURE_API_KEY" "azure_api_key" "azure_api_privkey"
+		encrypt_and_store_secret "$GEMINI_API_KEY" "gemini_api_key" "gemini_api_privkey"
+		encrypt_and_store_secret "$REDIS_PASSWORD" "redis_password" "redis_privkey"
+	fi
 
 	echo "Updated $JEFF_FILE"
 fi

@@ -1634,27 +1634,17 @@ function podman_secret_to_tmpfile() {
 	local name="$1"
 	local outfile="$2"
 
-	# Podman has no simple "secret cat", so use a short-lived container to read it.
-	local tmp_name
-	tmp_name="secret-read-$$-$RANDOM"
-
-	podman rm -f "$tmp_name" >/dev/null 2>&1 || true
-
-	if ! podman create \
-		--name "$tmp_name" \
+	# Read the secret content by mounting it into a temporary container
+	# and streaming it back to the host.
+	if ! podman run --rm \
 		--secret "$name" \
+		--entrypoint /bin/sh \
 		docker.io/library/alpine:3.20 \
-		cat "/run/secrets/$name" >/dev/null 2>&1; then
-		podman rm -f "$tmp_name" >/dev/null 2>&1 || true
+		-c "cat /run/secrets/$name" >"$outfile"; then
+		rm -f "$outfile"
 		return 1
 	fi
 
-	if ! podman cp "$tmp_name:/run/secrets/$name" "$outfile" >/dev/null 2>&1; then
-		podman rm -f "$tmp_name" >/dev/null 2>&1 || true
-		return 1
-	fi
-
-	podman rm -f "$tmp_name" >/dev/null 2>&1 || true
 	return 0
 }
 

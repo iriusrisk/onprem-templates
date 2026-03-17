@@ -757,7 +757,12 @@ function build_podman_custom_images() {
 		"localhost/nginx-rhel" \
 		"" \
 		'nginx -g "daemon off;"' \
-		"command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true" \
+		'if [ -f /etc/alpine-release ]; then
+		   apk add --no-cache libcap;
+		 else
+		   (apt-get update && apt-get install -y --no-install-recommends libcap2-bin && rm -rf /var/lib/apt/lists/*) || true;
+		 fi;
+		 command -v setcap >/dev/null 2>&1 && setcap "cap_net_bind_service=+ep" /usr/sbin/nginx || true' \
 		"nginx"
 
 	echo "Customizing tomcat (base tomcat-${tv}) → localhost/tomcat-rhel"

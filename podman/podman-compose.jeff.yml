@@ -1,6 +1,8 @@
 version: '3.7'
+
 networks:
   iriusrisk-backend:
+
 services:
   jeff:
     environment:
@@ -17,10 +19,15 @@ services:
     container_name: jeff
     restart: unless-stopped
     secrets:
-      - azure_api_key
-      - azure_api_privkey
+      - source: azure_api_key
+        target: AZURE_API_KEY_GPG
+        type: env
+      - source: azure_api_privkey
+        target: AZURE_API_PRIVKEY_ASC
+        type: env
     networks:
       - iriusrisk-backend
+
   rag:
     environment:
       - OPENAI_API_KEY=""
@@ -37,10 +44,15 @@ services:
     container_name: rag
     restart: unless-stopped
     secrets:
-      - azure_api_key
-      - azure_api_privkey
+      - source: azure_api_key
+        target: AZURE_API_KEY_GPG
+        type: env
+      - source: azure_api_privkey
+        target: AZURE_API_PRIVKEY_ASC
+        type: env
     networks:
       - iriusrisk-backend
+
   ash:
     environment:
       - CORS_ORIGINS=http://localhost:5173, http://localhost:8003
@@ -53,12 +65,21 @@ services:
     container_name: ash
     restart: unless-stopped
     secrets:
-      - gemini_api_key
-      - gemini_api_privkey
-      - azure_api_key
-      - azure_api_privkey
+      - source: gemini_api_key
+        target: GEMINI_API_KEY_GPG
+        type: env
+      - source: gemini_api_privkey
+        target: GEMINI_API_PRIVKEY_ASC
+        type: env
+      - source: azure_api_key
+        target: AZURE_API_KEY_GPG
+        type: env
+      - source: azure_api_privkey
+        target: AZURE_API_PRIVKEY_ASC
+        type: env
     networks:
       - iriusrisk-backend
+
   haven:
     environment:
       - ENVIRONMENT=PROD
@@ -77,12 +98,21 @@ services:
     depends_on:
       - redis
     secrets:
-      - azure_api_key
-      - azure_api_privkey
-      - redis_password
-      - redis_privkey
+      - source: azure_api_key
+        target: AZURE_API_KEY_GPG
+        type: env
+      - source: azure_api_privkey
+        target: AZURE_API_PRIVKEY_ASC
+        type: env
+      - source: redis_password
+        target: REDIS_PASSWORD_GPG
+        type: env
+      - source: redis_privkey
+        target: REDIS_PRIVKEY_ASC
+        type: env
     networks:
       - iriusrisk-backend
+
   redis:
     image: localhost/redis-stack-gpg:latest
     container_name: redis
@@ -90,14 +120,13 @@ services:
     ports:
       - "6379:6379"
       - "8001:8001"
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$(gpg --batch --import /run/secrets/redis_privkey >/dev/null 2>&1 || true; gpg --batch --yes --decrypt /run/secrets/redis_password 2>/dev/null)\" ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
     secrets:
-      - redis_password
-      - redis_privkey
+      - source: redis_password
+        target: REDIS_PASSWORD_GPG
+        type: env
+      - source: redis_privkey
+        target: REDIS_PRIVKEY_ASC
+        type: env
     networks:
       - iriusrisk-backend
 

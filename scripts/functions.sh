@@ -261,7 +261,7 @@ function install_and_configure_postgres() {
 		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
 
 		if [[ $OFFLINE -eq 0 ]]; then
-			build_podman_secret_image "docker.io/library/postgres:15.4" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret POSTGRES_PASSWORD /run/secrets/db_pwd /run/secrets/db_privkey' 'docker-entrypoint.sh "$@"'
+			build_podman_secret_image "docker.io/library/postgres:15.4" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' 'docker-entrypoint.sh "$@"'
 		fi
 
 		# --- Graceful down then hard teardown for a clean slate ---
@@ -590,9 +590,9 @@ function build_compose_override() {
 
 function podman_secret_to_env_snippet() {
 	local var_name="$1"
-	local cipher="$2"
-	local priv="$3"
-	printf 'export_from_secret %s %s %s' "$var_name" "$cipher" "$priv"
+	local cipher_env="$2"
+	local priv_env="$3"
+	printf 'export_from_secret_env %s %s %s' "$var_name" "$cipher_env" "$priv_env"
 }
 
 function build_podman_secret_image() {
@@ -632,13 +632,27 @@ PY2
 #!/usr/bin/env sh
 set -eu
 
-export_from_secret() {
+export_from_secret_env() {
   var_name="\$1"
-  cipher="\$2"
-  priv="\$3"
-  if [ -r "\$cipher" ] && [ -r "\$priv" ]; then
-    gpg --batch --import "\$priv" >/dev/null 2>&1 || true
-    value="\$(gpg --batch --yes --decrypt "\$cipher" 2>/dev/null || true)"
+  cipher_env="\$2"
+  priv_env="\$3"
+
+  cipher_value="\$(printenv "\$cipher_env" 2>/dev/null || true)"
+  priv_value="\$(printenv "\$priv_env" 2>/dev/null || true)"
+
+  if [ -n "\$cipher_value" ] && [ -n "\$priv_value" ]; then
+    tmpdir="\$(mktemp -d)"
+    cipher_file="\$tmpdir/cipher.gpg"
+    priv_file="\$tmpdir/private.asc"
+
+    printf '%s' "\$cipher_value" >"\$cipher_file"
+    printf '%s' "\$priv_value" >"\$priv_file"
+
+    gpg --batch --import "\$priv_file" >/dev/null 2>&1 || true
+    value="\$(gpg --batch --yes --decrypt "\$cipher_file" 2>/dev/null || true)"
+
+    rm -rf "\$tmpdir"
+
     if [ -n "\$value" ]; then
       export "\$var_name=\$value"
     fi
@@ -685,13 +699,12 @@ exec "$@"
 	podman cp "$wrapper_file" "$tmp_name:/usr/local/bin/podman-secret-wrapper.sh"
 	if [[ -n $final_exec ]]; then
 		final_exec_file="$(mktemp)"
-		printf '%s
-' "$final_exec" >"$final_exec_file"
+		printf '%s\n' "$final_exec" >"$final_exec_file"
 		podman cp "$final_exec_file" "$tmp_name:/usr/local/bin/podman-secret-final-exec"
-		podman exec "$tmp_name" chmod +x /usr/local/bin/podman-secret-final-exec
+		podman exec "$tmp_name" chmod 755 /usr/local/bin/podman-secret-final-exec
 		rm -f "$final_exec_file"
 	fi
-	podman exec "$tmp_name" chmod +x /usr/local/bin/podman-secret-wrapper.sh
+	podman exec "$tmp_name" chmod 755 /usr/local/bin/podman-secret-wrapper.sh
 	podman stop "$tmp_name" >/dev/null
 	rm -f "$wrapper_file"
 
@@ -752,7 +765,21 @@ function build_podman_custom_images() {
 		"docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" \
 		"temp-tomcat" \
 		"localhost/tomcat-rhel" \
-		$'if [ -r /run/secrets/db_pwd ] && [ -r /run/secrets/db_privkey ]; then\n  gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1 || true\n  dec="$(gpg --batch --yes --decrypt /run/secrets/db_pwd 2>/dev/null || true)"\n  if [ -n "$dec" ]; then\n    export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"\n  fi\nfi\nexport_from_secret KEYSTORE_PASSWORD /run/secrets/keystore_pwd /run/secrets/keystore_privkey\nexport_from_secret KEY_ALIAS_PASSWORD /run/secrets/key_alias_pwd /run/secrets/key_alias_privkey' \
+		$'if [ -n "$(printenv DB_PWD_GPG 2>/dev/null || true)" ] && [ -n "$(printenv DB_PRIVKEY_ASC 2>/dev/null || true)" ]; then
+  tmpdir="$(mktemp -d)"
+  cipher_file="$tmpdir/db_pwd.gpg"
+  priv_file="$tmpdir/db_privkey.asc"
+  printf '%s' "$DB_PWD_GPG" >"$cipher_file"
+  printf '%s' "$DB_PRIVKEY_ASC" >"$priv_file"
+  gpg --batch --import "$priv_file" >/dev/null 2>&1 || true
+  dec="$(gpg --batch --yes --decrypt "$cipher_file" 2>/dev/null || true)"
+  rm -rf "$tmpdir"
+  if [ -n "$dec" ]; then
+    export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"
+  fi
+fi
+export_from_secret_env KEYSTORE_PASSWORD KEYSTORE_PWD_GPG KEYSTORE_PRIVKEY_ASC
+export_from_secret_env KEY_ALIAS_PASSWORD KEY_ALIAS_PWD_GPG KEY_ALIAS_PRIVKEY_ASC' \
 		'/entrypoint/dynamic-entrypoint.sh "$@"' \
 		"" \
 		"tomcat"
@@ -762,7 +789,7 @@ function build_podman_custom_images() {
 		"docker.io/library/postgres:15.4" \
 		"temp-postgres" \
 		"localhost/postgres-gpg:15.4" \
-		'export_from_secret POSTGRES_PASSWORD /run/secrets/db_pwd /run/secrets/db_privkey' \
+		'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' \
 		'docker-entrypoint.sh "$@"'
 
 	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
@@ -771,31 +798,31 @@ function build_podman_custom_images() {
 			"docker.io/continuumsecurity/iriusrisk-prod:ai-jeff-4.6.2" \
 			"temp-jeff" \
 			"localhost/ai-jeff-4.6.2" \
-			"$(podman_secret_to_env_snippet AZURE_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey)"
+			"$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
 		build_podman_secret_image \
 			"docker.io/continuumsecurity/iriusrisk-prod:ai-rag-1.2.2" \
 			"temp-rag" \
 			"localhost/ai-rag-1.2.2" \
-			"$(podman_secret_to_env_snippet AZURE_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey)"
+			"$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
 		build_podman_secret_image \
 			"docker.io/continuumsecurity/iriusrisk-prod:ai-ash-1.7.0" \
 			"temp-ash" \
 			"localhost/ai-ash-1.7.0" \
-			$'export_from_secret GEMINI_API_KEY /run/secrets/gemini_api_key /run/secrets/gemini_api_privkey\nexport_from_secret AZURE_OPENAI_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey'
+			$'export_from_secret_env GEMINI_API_KEY GEMINI_API_KEY_GPG GEMINI_API_PRIVKEY_ASC\nexport_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC'
 
 		build_podman_secret_image \
 			"docker.io/continuumsecurity/iriusrisk-prod:ai-haven-1.0.1" \
 			"temp-haven" \
 			"localhost/ai-haven-1.0.1" \
-			$'export_from_secret AZURE_API_KEY /run/secrets/azure_api_key /run/secrets/azure_api_privkey\nexport_from_secret REDIS_PASSWORD /run/secrets/redis_password /run/secrets/redis_privkey'
+			$'export_from_secret_env AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC\nexport_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC'
 
 		build_podman_secret_image \
 			"docker.io/redis/redis-stack:latest" \
 			"temp-redis" \
 			"localhost/redis-stack-gpg:latest" \
-			'export_from_secret REDIS_PASSWORD /run/secrets/redis_password /run/secrets/redis_privkey' \
+			'export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC' \
 			'redis-stack-server --requirepass "$REDIS_PASSWORD"'
 	fi
 
@@ -1014,14 +1041,21 @@ function encrypt_and_store_secret() {
 	local secret_value="$1"
 	local secret_name="$2"
 	local privkey_secret_name="$3"
+
+	if [[ -z $secret_name || -z $privkey_secret_name ]]; then
+		echo "encrypt_and_store_secret: missing secret name(s)" >&2
+		return 1
+	fi
+
 	local uid="${secret_name}@iriusrisk.local"
+	local homedir batch enc_file priv_file plaintext_file fp
+	homedir="$(mktemp -d "/tmp/${secret_name}.gnupg.XXXXXX")" || return 1
+	chmod 700 "$homedir" || {
+		rm -rf "$homedir"
+		return 1
+	}
 
-	# Make an isolated, temporary GNUPGHOME so we don't touch the user's keyring
-	local homedir="$(mktemp -d "/tmp/${secret_name}.gnupg.XXXX")"
-	chmod 700 "$homedir"
-
-	# Batch file with %no-protection to avoid pinentry entirely
-	local batch="$homedir/gpg_batch"
+	batch="$homedir/gpg_batch"
 	cat >"$batch" <<EOF
 %no-protection
 Key-Type: RSA
@@ -1032,62 +1066,97 @@ Name-Email: ${uid}
 Expire-Date: 0
 EOF
 
-	# Create the key (no passphrase, no pinentry needed)
-	gpg --homedir "$homedir" --batch --generate-key "$batch"
+	if ! gpg --homedir "$homedir" --batch --generate-key "$batch" >/dev/null 2>&1; then
+		rm -f "$batch"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to generate GPG key" >&2
+		return 1
+	fi
 	rm -f "$batch"
 
-	# Get fingerprint for the new key
-	local fp
-	fp="$(gpg --homedir "$homedir" --list-keys --with-colons "$uid" | awk -F: '/^pub/ {print $5; exit}')"
+	fp="$(
+		gpg --homedir "$homedir" --list-keys --with-colons "$uid" 2>/dev/null |
+			awk -F: '/^fpr:/ {print $10; exit}'
+	)"
+	if [[ -z $fp ]]; then
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to determine key fingerprint" >&2
+		return 1
+	fi
 
-	# Encrypt the secret value to this key
-	local enc_file="$(mktemp "/tmp/${secret_name}.XXXX.gpg")"
-	local priv_file="$(mktemp "/tmp/${secret_name}_privkey.XXXX.asc")"
+	plaintext_file="$(mktemp "/tmp/${secret_name}.plaintext.XXXXXX")" || {
+		rm -rf "$homedir"
+		return 1
+	}
+	enc_file="$(mktemp "/tmp/${secret_name}.enc.XXXXXX.gpg")" || {
+		rm -f "$plaintext_file"
+		rm -rf "$homedir"
+		return 1
+	}
+	priv_file="$(mktemp "/tmp/${secret_name}_privkey.XXXXXX.asc")" || {
+		rm -f "$plaintext_file" "$enc_file"
+		rm -rf "$homedir"
+		return 1
+	}
 
-	echo "$secret_value" |
-		gpg --homedir "$homedir" --batch --yes --encrypt --recipient "$fp" --output "$enc_file"
+	# Preserve the exact secret bytes except Bash cannot carry NUL bytes in variables.
+	printf '%s' "$secret_value" >"$plaintext_file"
 
-	# Export the private key (ASCII-armored)
-	gpg --homedir "$homedir" --batch --yes --export-secret-keys --armor "$fp" >"$priv_file"
+	if ! gpg --homedir "$homedir" --batch --yes \
+		--armor \
+		--trust-model always \
+		--recipient "$fp" \
+		--output "$enc_file" \
+		--encrypt "$plaintext_file" >/dev/null 2>&1; then
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to encrypt secret" >&2
+		return 1
+	fi
 
-	# Store in Podman secrets: <name> (encrypted payload) and <name>_privkey (private key)
-	podman secret rm "${secret_name}" "${privkey_secret_name}" 2>/dev/null || true
-	podman secret create --replace "${secret_name}" "$enc_file"
-	podman secret create --replace "${privkey_secret_name}" "$priv_file"
+	if ! gpg --homedir "$homedir" --batch --yes \
+		--armor --export-secret-keys "$fp" >"$priv_file" 2>/dev/null; then
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to export private key" >&2
+		return 1
+	fi
 
-	# Cleanup artifacts and the whole temporary keyring
-	rm -f "$enc_file" "$priv_file"
+	# Remove any existing versions first. Ignore failures.
+	podman secret rm "$secret_name" "$privkey_secret_name" >/dev/null 2>&1 || true
+
+	if ! podman secret create --replace "$secret_name" "$enc_file" >/dev/null; then
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to create podman secret $secret_name" >&2
+		return 1
+	fi
+
+	if ! podman secret create --replace "$privkey_secret_name" "$priv_file" >/dev/null; then
+		podman secret rm "$secret_name" >/dev/null 2>&1 || true
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to create podman secret $privkey_secret_name" >&2
+		return 1
+	fi
+
+	rm -f "$plaintext_file" "$enc_file" "$priv_file"
 	rm -rf "$homedir"
+	return 0
 }
 
 function read_podman_secret_plaintext() {
 	local secret_name="$1"
-	local inspect_json secret_data
+	local privkey_secret_name="$2"
 
-	inspect_json="$(podman secret inspect --showsecret "$secret_name" 2>/dev/null || true)"
-	if [[ -n $inspect_json ]] && command -v python3 >/dev/null 2>&1; then
-		secret_data="$(
-			python3 - "$inspect_json" <<'PY2'
-import json, sys, base64
-raw = sys.argv[1]
-try:
-    obj = json.loads(raw)
-    if isinstance(obj, list):
-        obj = obj[0]
-    value = obj.get('SecretData') or obj.get('secret_data')
-    if value:
-        try:
-            print(base64.b64decode(value).decode().strip())
-        except Exception:
-            print(str(value).strip())
-except Exception:
-    pass
-PY2
-		)"
-		if [[ -n $secret_data ]]; then
-			echo "$secret_data"
-			return 0
-		fi
+	if [[ -z $secret_name || -z $privkey_secret_name ]]; then
+		echo "read_podman_secret_plaintext: missing secret name(s)" >&2
+		return 1
+	fi
+
+	if ! command -v gpg >/dev/null 2>&1; then
+		echo "read_podman_secret_plaintext: gpg is required" >&2
+		return 1
 	fi
 
 	local probe_image="localhost/postgres-gpg:15.4"
@@ -1095,7 +1164,59 @@ PY2
 		probe_image="docker.io/library/postgres:15.4"
 	fi
 
-	podman run --rm --entrypoint /bin/sh --secret "$secret_name" "$probe_image" -c "cat /run/secrets/$secret_name" 2>/dev/null || return 1
+	local tmpdir gnupghome enc_file key_file plaintext_file
+	tmpdir="$(mktemp -d "/tmp/${secret_name}.read.XXXXXX")" || return 1
+	gnupghome="$tmpdir/gnupg"
+	enc_file="$tmpdir/secret.gpg"
+	key_file="$tmpdir/private.asc"
+	plaintext_file="$tmpdir/plaintext"
+
+	mkdir -m 700 "$gnupghome" || {
+		rm -rf "$tmpdir"
+		return 1
+	}
+
+	# Read the encrypted payload from the podman secret into a file.
+	if ! podman run --rm --entrypoint /bin/sh \
+		--secret "$secret_name" \
+		"$probe_image" \
+		-c "cat '/run/secrets/$secret_name'" >"$enc_file" 2>/dev/null; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to read encrypted secret $secret_name" >&2
+		return 1
+	fi
+
+	# Read the armored private key from the companion secret into a file.
+	if ! podman run --rm --entrypoint /bin/sh \
+		--secret "$privkey_secret_name" \
+		"$probe_image" \
+		-c "cat '/run/secrets/$privkey_secret_name'" >"$key_file" 2>/dev/null; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to read private key secret $privkey_secret_name" >&2
+		return 1
+	fi
+
+	# Import the private key into an isolated temporary keyring.
+	if ! gpg --homedir "$gnupghome" --batch --import "$key_file" >/dev/null 2>&1; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to import private key" >&2
+		return 1
+	fi
+
+	# Decrypt to a file first so we never store potentially problematic bytes in a shell variable.
+	if ! gpg --homedir "$gnupghome" --batch --yes \
+		--output "$plaintext_file" \
+		--decrypt "$enc_file" >/dev/null 2>&1; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to decrypt secret" >&2
+		return 1
+	fi
+
+	# Print exact plaintext bytes to stdout.
+	cat "$plaintext_file"
+
+	rm -rf "$tmpdir"
+	return 0
 }
 
 # Helper: update image line for a component that may be unversioned or versioned already

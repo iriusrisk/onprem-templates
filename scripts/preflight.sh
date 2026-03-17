@@ -229,9 +229,9 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 		fi
 
 		if [[ $CONTAINER_ENGINE == "podman" ]]; then
-			AZURE_API_KEY_VALUE="$(read_podman_secret_plaintext azure_api_key || true)"
-			GEMINI_API_KEY_VALUE="$(read_podman_secret_plaintext gemini_api_key || true)"
-			REDIS_PASSWORD_VALUE="$(read_podman_secret_plaintext redis_password || true)"
+			AZURE_API_KEY_VALUE="$(read_podman_secret_plaintext azure_api_key azure_api_privkey || true)"
+			GEMINI_API_KEY_VALUE="$(read_podman_secret_plaintext gemini_api_key gemini_api_privkey || true)"
+			REDIS_PASSWORD_VALUE="$(read_podman_secret_plaintext redis_password redis_privkey || true)"
 
 			if [[ -z $AZURE_API_KEY_VALUE ]]; then
 				msg="WARNING: Podman secret 'azure_api_key' must exist and be readable when Jeff is enabled"

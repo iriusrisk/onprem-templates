@@ -1625,6 +1625,127 @@ function wait_for_health() {
 	return 1
 }
 
+function podman_secret_exists() {
+	local name="$1"
+	podman secret inspect "$name" >/dev/null 2>&1
+}
+
+function podman_secret_to_tmpfile() {
+	local name="$1"
+	local outfile="$2"
+
+	# Podman has no simple "secret cat", so use a short-lived container to read it.
+	local tmp_name
+	tmp_name="secret-read-$$-$RANDOM"
+
+	podman rm -f "$tmp_name" >/dev/null 2>&1 || true
+
+	if ! podman create \
+		--name "$tmp_name" \
+		--secret "$name" \
+		docker.io/library/alpine:3.20 \
+		cat "/run/secrets/$name" >/dev/null 2>&1; then
+		podman rm -f "$tmp_name" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	if ! podman cp "$tmp_name:/run/secrets/$name" "$outfile" >/dev/null 2>&1; then
+		podman rm -f "$tmp_name" >/dev/null 2>&1 || true
+		return 1
+	fi
+
+	podman rm -f "$tmp_name" >/dev/null 2>&1 || true
+	return 0
+}
+
+function is_ascii_armored_gpg_file() {
+	local file="$1"
+	grep -q '^-----BEGIN PGP MESSAGE-----' "$file"
+}
+
+function migrate_podman_secret_to_armored_if_needed() {
+	local secret_name="$1"
+	local privkey_secret_name="$2"
+
+	if ! podman_secret_exists "$secret_name"; then
+		echo "Secret $secret_name not present; skipping migration"
+		return 0
+	fi
+
+	if ! podman_secret_exists "$privkey_secret_name"; then
+		echo "WARNING: Secret $secret_name exists but $privkey_secret_name is missing; cannot migrate" >&2
+		return 1
+	fi
+
+	local workdir cipher_file priv_file plaintext_file gpg_home
+	workdir="$(mktemp -d "/tmp/secret-migrate.${secret_name}.XXXXXX")" || return 1
+	gpg_home="$workdir/gnupg"
+	mkdir -p "$gpg_home"
+	chmod 700 "$gpg_home"
+
+	cipher_file="$workdir/${secret_name}.gpg"
+	priv_file="$workdir/${privkey_secret_name}.asc"
+	plaintext_file="$workdir/${secret_name}.plain"
+
+	if ! podman_secret_to_tmpfile "$secret_name" "$cipher_file"; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to read secret payload for $secret_name" >&2
+		return 1
+	fi
+
+	if ! podman_secret_to_tmpfile "$privkey_secret_name" "$priv_file"; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to read private key secret for $privkey_secret_name" >&2
+		return 1
+	fi
+
+	# If already armored, nothing to do.
+	if is_ascii_armored_gpg_file "$cipher_file"; then
+		echo "Secret $secret_name is already ASCII-armored; no migration needed"
+		rm -rf "$workdir"
+		return 0
+	fi
+
+	if ! gpg --homedir "$gpg_home" --batch --import "$priv_file" >/dev/null 2>&1; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to import private key for $secret_name" >&2
+		return 1
+	fi
+
+	if ! gpg --homedir "$gpg_home" --batch --yes --output "$plaintext_file" --decrypt "$cipher_file" >/dev/null 2>&1; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to decrypt existing secret $secret_name" >&2
+		return 1
+	fi
+
+	local plaintext
+	plaintext="$(cat "$plaintext_file")"
+
+	# Re-encrypt and replace both secrets using the new implementation
+	if ! encrypt_and_store_secret "$plaintext" "$secret_name" "$privkey_secret_name"; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to re-encrypt and store migrated secret $secret_name" >&2
+		return 1
+	fi
+
+	rm -rf "$workdir"
+	echo "Migrated secret $secret_name to armored env-compatible format"
+	return 0
+}
+
+function migrate_existing_podman_secrets_if_needed() {
+	echo "Checking Podman secrets for old binary-encrypted payloads..."
+
+	migrate_podman_secret_to_armored_if_needed "db_pwd" "db_privkey"
+
+	migrate_podman_secret_to_armored_if_needed "keystore_pwd" "keystore_privkey"
+	migrate_podman_secret_to_armored_if_needed "key_alias_pwd" "key_alias_privkey"
+
+	migrate_podman_secret_to_armored_if_needed "azure_api_key" "azure_api_privkey"
+	migrate_podman_secret_to_armored_if_needed "gemini_api_key" "gemini_api_privkey"
+	migrate_podman_secret_to_armored_if_needed "redis_password" "redis_privkey"
+}
+
 # —————————————————————————————————————————————————————————————
 # Legacy Podman service cleanup + single-unit generation helpers
 # —————————————————————————————————————————————————————————————

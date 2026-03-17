@@ -343,6 +343,7 @@ fi
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	container_registry_login
+	migrate_existing_podman_secrets_if_needed
 	build_podman_custom_images "$CHOSEN_VERSION"
 fi
 

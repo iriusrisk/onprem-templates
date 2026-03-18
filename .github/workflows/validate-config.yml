@@ -34,10 +34,10 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Validate docker-compose syntax
-        run: docker-compose -f docker/docker-compose.tpl -f docker/docker-compose.override.tpl -f docker/docker-compose.postgres.tpl -f docker/docker-compose.jeff.tpl config
+        run: docker-compose -f templates/docker/docker-compose.tpl -f templates/docker/docker-compose.override.tpl -f templates/docker/docker-compose.postgres.tpl -f templates/docker/docker-compose.jeff.tpl config
 
       - name: Validate Podman config
-        run: docker-compose -f podman/podman-compose.tpl -f podman/podman-compose.override.tpl -f podman/podman-compose.postgres.tpl -f podman/podman-compose.jeff.tpl config
+        run: docker-compose -f templates/podman/podman-compose.tpl -f templates/podman/podman-compose.override.tpl -f templates/podman/podman-compose.postgres.tpl -f templates/podman/podman-compose.jeff.tpl config
 
       - name: Set up Python
         uses: actions/setup-python@v4

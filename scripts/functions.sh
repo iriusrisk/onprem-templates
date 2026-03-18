@@ -1866,12 +1866,22 @@ function extract_postgres_password() {
 
 function discover_placeholders() {
 	local file="$1"
+	local line rest name
+
 	[[ -f $file ]] || return 0
 
-	# Match both ${VAR} and \${VAR}, then normalize to just VAR
-	grep -oE '\\?\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$file" 2>/dev/null |
-		sed -E 's/^\\?\$\{//; s/\}$//' |
-		sort -u || true
+	while IFS= read -r line || [[ -n $line ]]; do
+		rest="$line"
+
+		# Extract all ${VAR} occurrences from the line
+		while [[ $rest =~ \$\{([A-Za-z_][A-Za-z0-9_]*)\} ]]; do
+			name="${BASH_REMATCH[1]}"
+			printf '%s\n' "$name"
+
+			# Continue scanning after this match
+			rest="${rest#*"${BASH_REMATCH[0]}"}"
+		done
+	done <"$file"
 }
 
 function capture_preserved_values() {
@@ -1885,8 +1895,6 @@ function capture_preserved_values() {
 
 	local all_placeholders=()
 	local p
-
-	all_placeholders=()
 
 	if [[ -n $override_template && -f $override_template ]]; then
 		while IFS= read -r p; do
@@ -1906,10 +1914,6 @@ function capture_preserved_values() {
 		done < <(discover_placeholders "$postgres_template")
 	fi
 
-	if [[ ${#all_placeholders[@]} -gt 0 ]]; then
-		mapfile -t all_placeholders < <(printf '%s\n' "${all_placeholders[@]}" | sort -u)
-	fi
-
 	if [[ ${#all_placeholders[@]} -eq 0 ]]; then
 		echo "ERROR: No placeholders discovered from templates." >&2
 		echo "  override_template=$override_template" >&2
@@ -1917,6 +1921,8 @@ function capture_preserved_values() {
 		echo "  postgres_template=$postgres_template" >&2
 		exit 1
 	fi
+
+	mapfile -t all_placeholders < <(printf '%s\n' "${all_placeholders[@]}" | sort -u)
 
 	echo "Preserving client-specific values from current compose files..."
 
@@ -1941,10 +1947,6 @@ function capture_preserved_values() {
 				PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$override_file" || true)"
 				[[ -z ${PRESERVED_VALUES[$p]} ]] && [[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
 				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$compose_file" || true)"
-
-				if [[ -z ${PRESERVED_VALUES[$p]} ]]; then
-					echo "WARNING: No value found for placeholder: $p"
-				fi
 				;;
 		esac
 	done
@@ -1953,8 +1955,6 @@ function capture_preserved_values() {
 	for p in "${all_placeholders[@]}"; do
 		if [[ -n ${PRESERVED_VALUES[$p]:-} ]]; then
 			echo "  - $p=[set]"
-		else
-			echo "  - $p=[empty/not found]"
 		fi
 	done
 }
@@ -2014,25 +2014,50 @@ function restore_preserved_values() {
 	echo "Re-applied preserved client values to refreshed compose files."
 }
 
-function refresh_generated_compose_files_from_templates() {
+refresh_generated_compose_files_from_templates() {
 	PRESERVED_VALUES=()
 
 	local compose_dir="$1"
 	local engine="$2"
 
-	local override_template="../templates/$engine/$engine-compose.override.tpl"
-	local override_file="../$engine/$engine-compose.override.yml"
-	local compose_template="../templates/$engine/$engine-compose.tpl"
-	local compose_file="../$engine/$engine-compose.yml"
-	local postgres_template="../templates/$engine/$engine-compose.postgres.tpl"
-	local postgres_file="../$engine/$engine-compose.postgres.yml"
+	local base_dir
+	base_dir="$(cd "$compose_dir/.." && pwd)"
+
+	local templates_dir="$base_dir/templates/$engine"
+
+	local override_template="$templates_dir/$engine-compose.override.tpl"
+	local override_file="$compose_dir/$engine-compose.override.yml"
+	local compose_template="$templates_dir/$engine-compose.tpl"
+	local compose_file="$compose_dir/$engine-compose.yml"
+	local postgres_template="$templates_dir/$engine-compose.postgres.tpl"
+	local postgres_file="$compose_dir/$engine-compose.postgres.yml"
 
 	local jeff_template=""
 	local jeff_file=""
 
 	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
-		jeff_template="../templates/$engine/$engine-compose.jeff.tpl"
-		jeff_file="../$engine/$engine-compose.jeff.yml"
+		jeff_template="$templates_dir/$engine-compose.jeff.tpl"
+		jeff_file="$compose_dir/$engine-compose.jeff.yml"
+	fi
+
+	[[ -f $override_template ]] || {
+		echo "ERROR: Missing template: $override_template" >&2
+		exit 1
+	}
+	[[ -f $compose_template ]] || {
+		echo "ERROR: Missing template: $compose_template" >&2
+		exit 1
+	}
+	[[ -f $postgres_template ]] || {
+		echo "ERROR: Missing template: $postgres_template" >&2
+		exit 1
+	}
+
+	if [[ -n $jeff_template ]]; then
+		[[ -f $jeff_template ]] || {
+			echo "ERROR: Missing template: $jeff_template" >&2
+			exit 1
+		}
 	fi
 
 	capture_preserved_values \

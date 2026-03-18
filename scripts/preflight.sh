@@ -320,12 +320,6 @@ fi
 # Jeff connectivity check (if applicable)
 # —————————————————————————————————————————————————————————————
 
-echo "DEBUG: JEFF_ENABLED=[$JEFF_ENABLED]"
-echo "DEBUG: AZURE_ENDPOINT=[$AZURE_ENDPOINT_VALUE]"
-echo "DEBUG: GEMINI_ENDPOINT=[$GEMINI_ENDPOINT_VALUE]"
-echo "DEBUG: AZURE_API_KEY set? [$([[ -n $AZURE_API_KEY_VALUE ]] && echo yes || echo no)]"
-echo "DEBUG: GEMINI_API_KEY set? [$([[ -n $GEMINI_API_KEY_VALUE ]] && echo yes || echo no)]"
-
 if [[ $JEFF_ENABLED == "y" && $JEFF_VALUES_FILLED -eq 1 ]]; then
 	echo "Checking Azure and Gemini API connectivity..."
 	check_gemini_api "$GEMINI_ENDPOINT_VALUE" "$GEMINI_API_KEY_VALUE"

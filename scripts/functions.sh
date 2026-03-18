@@ -1873,6 +1873,9 @@ function capture_preserved_values() {
 			POSTGRES_PASSWORD)
 				PRESERVED_VALUES["$p"]="$(extract_postgres_password "$override_file" "$postgres_file" || true)"
 				;;
+			GEMINI_ENDPOINT)
+				PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
+				;;
 			*)
 				# Generic fallback: try to find KEY=value in existing files
 				PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$override_file" || true)"

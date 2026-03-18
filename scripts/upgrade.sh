@@ -196,6 +196,7 @@ refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGIN
 # —————————————————————————————————————————————————————————————
 OVERRIDE_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
 JEFF_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
+JEFF_TEMPLATE="$SCRIPT_PATH/../templates/$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.tpl"
 
 USING_JEFF="$(prompt_yn "Are you using Jeff?")"
 
@@ -212,6 +213,7 @@ else
 	if [[ $ENABLE_JEFF_NOW == "y" ]]; then
 		JEFF_ENABLED="y"
 		JEFF_NEWLY_ENABLED="y"
+		cp "$JEFF_TEMPLATE" "$JEFF_FILE"
 	else
 		JEFF_ENABLED="n"
 		JEFF_NEWLY_ENABLED="n"

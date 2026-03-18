@@ -37,7 +37,7 @@ jobs:
         run: docker-compose -f templates/docker/docker-compose.tpl -f templates/docker/docker-compose.override.tpl -f templates/docker/docker-compose.postgres.tpl -f templates/docker/docker-compose.jeff.tpl config
 
       - name: Validate Podman config
-        run: docker-compose -f templates/podman/podman-compose.tpl -f templates/podman/podman-compose.override.tpl -f templates/podman/podman-compose.postgres.tpl -f templates/podman/podman-compose.jeff.tpl config
+        run: docker-compose -f templates/podman/podman-compose.tpl config
 
       - name: Set up Python
         uses: actions/setup-python@v4

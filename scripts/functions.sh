@@ -1867,7 +1867,11 @@ function extract_postgres_password() {
 function discover_placeholders() {
 	local file="$1"
 	[[ -f $file ]] || return 0
-	grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$file" 2>/dev/null | sed -E 's/^\$\{|\}$//g' | sort -u || true
+
+	# Match both ${VAR} and \${VAR}, then normalize to just VAR
+	grep -oE '\\?\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$file" 2>/dev/null |
+		sed -E 's/^\\?\$\{//; s/\}$//' |
+		sort -u || true
 }
 
 function capture_preserved_values() {
@@ -1882,13 +1886,29 @@ function capture_preserved_values() {
 	local all_placeholders=()
 	local p
 
-	mapfile -t all_placeholders < <(
-		{
-			[[ -n $override_template ]] && discover_placeholders "$override_template"
-			[[ -n $jeff_template ]] && discover_placeholders "$jeff_template"
-			[[ -n $postgres_template ]] && discover_placeholders "$postgres_template"
-		} | sort -u
-	)
+	all_placeholders=()
+
+	if [[ -n $override_template && -f $override_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$override_template")
+	fi
+
+	if [[ -n $jeff_template && -f $jeff_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$jeff_template")
+	fi
+
+	if [[ -n $postgres_template && -f $postgres_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$postgres_template")
+	fi
+
+	if [[ ${#all_placeholders[@]} -gt 0 ]]; then
+		mapfile -t all_placeholders < <(printf '%s\n' "${all_placeholders[@]}" | sort -u)
+	fi
 
 	if [[ ${#all_placeholders[@]} -eq 0 ]]; then
 		echo "ERROR: No placeholders discovered from templates." >&2

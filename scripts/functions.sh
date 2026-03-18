@@ -1742,6 +1742,36 @@ function migrate_existing_podman_secrets_if_needed() {
 
 declare -A PRESERVED_VALUES=()
 
+function require_preserved_value() {
+	local key="$1"
+
+	if [[ -z ${PRESERVED_VALUES[$key]:-} ]]; then
+		echo "ERROR: Required client value could not be extracted: $key" >&2
+		exit 1
+	fi
+}
+
+function validate_preserved_values() {
+	# Always required
+	require_preserved_value "HOST_NAME"
+	require_preserved_value "POSTGRES_IP"
+
+	# Docker requires plaintext postgres password preserved
+	if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
+		require_preserved_value "POSTGRES_PASSWORD"
+	fi
+
+	# Jeff-specific values required only when Jeff is enabled
+	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		require_preserved_value "AZURE_ENDPOINT"
+		require_preserved_value "AZURE_API_KEY"
+		require_preserved_value "AZURE_OPENAI_API_KEY"
+		require_preserved_value "AZURE_OPENAI_ENDPOINT"
+		require_preserved_value "GEMINI_ENDPOINT"
+		require_preserved_value "GEMINI_API_KEY"
+	fi
+}
+
 function extract_env_value() {
 	local key="$1"
 	local file="$2"
@@ -1854,9 +1884,9 @@ function capture_preserved_values() {
 
 	mapfile -t all_placeholders < <(
 		{
-			discover_placeholders "$override_template"
-			discover_placeholders "$jeff_template"
-			discover_placeholders "$postgres_template"
+			[[ -n $override_template ]] && discover_placeholders "$override_template"
+			[[ -n $jeff_template ]] && discover_placeholders "$jeff_template"
+			[[ -n $postgres_template ]] && discover_placeholders "$postgres_template"
 		} | sort -u
 	)
 
@@ -1874,12 +1904,14 @@ function capture_preserved_values() {
 				PRESERVED_VALUES["$p"]="$(extract_postgres_password "$override_file" "$postgres_file" || true)"
 				;;
 			GEMINI_ENDPOINT)
-				PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
+				;;
+			AZURE_ENDPOINT | AZURE_API_KEY | AZURE_OPENAI_API_KEY | AZURE_OPENAI_ENDPOINT | GEMINI_API_KEY | REDIS_PASSWORD)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
 				;;
 			*)
-				# Generic fallback: try to find KEY=value in existing files
 				PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$override_file" || true)"
-				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && [[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
 				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$compose_file" || true)"
 
 				if [[ -z ${PRESERVED_VALUES[$p]} ]]; then
@@ -1890,8 +1922,8 @@ function capture_preserved_values() {
 	done
 
 	echo "Captured values:"
-	for p in "${!PRESERVED_VALUES[@]}"; do
-		if [[ -n ${PRESERVED_VALUES[$p]} ]]; then
+	for p in "${all_placeholders[@]}"; do
+		if [[ -n ${PRESERVED_VALUES[$p]:-} ]]; then
 			echo "  - $p=[set]"
 		else
 			echo "  - $p=[empty/not found]"
@@ -1912,8 +1944,11 @@ function copy_templates_to_final_locations() {
 	mkdir -p "$(dirname "$override_file")"
 
 	cp "$override_template" "$override_file"
-	cp "$jeff_template" "$jeff_file"
 	cp "$compose_template" "$compose_file"
+
+	if [[ -n $jeff_template && -f $jeff_template ]]; then
+		cp "$jeff_template" "$jeff_file"
+	fi
 
 	if [[ -f $postgres_template ]]; then
 		cp "$postgres_template" "$postgres_file"
@@ -1952,17 +1987,25 @@ function restore_preserved_values() {
 }
 
 function refresh_generated_compose_files_from_templates() {
+	PRESERVED_VALUES=()
+
 	local compose_dir="$1"
 	local engine="$2"
 
 	local override_template="../templates/$engine/$engine-compose.override.tpl"
 	local override_file="../$engine/$engine-compose.override.yml"
-	local jeff_template="../templates/$engine/$engine-compose.jeff.tpl"
-	local jeff_file="../$engine/$engine-compose.jeff.yml"
 	local compose_template="../templates/$engine/$engine-compose.tpl"
 	local compose_file="../$engine/$engine-compose.yml"
 	local postgres_template="../templates/$engine/$engine-compose.postgres.tpl"
 	local postgres_file="../$engine/$engine-compose.postgres.yml"
+
+	local jeff_template=""
+	local jeff_file=""
+
+	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		jeff_template="../templates/$engine/$engine-compose.jeff.tpl"
+		jeff_file="../$engine/$engine-compose.jeff.yml"
+	fi
 
 	capture_preserved_values \
 		"$compose_file" \
@@ -1972,6 +2015,8 @@ function refresh_generated_compose_files_from_templates() {
 		"$override_template" \
 		"$jeff_template" \
 		"$postgres_template"
+
+	validate_preserved_values
 
 	copy_templates_to_final_locations \
 		"$override_template" \

@@ -59,6 +59,8 @@ echo
 # Set engine and Postgres options, update templates
 # —————————————————————————————————————————————————————————————
 prompt_engine
+JEFF_ENABLED=$(prompt_yn "Are you using Jeff?")
+export JEFF_ENABLED
 
 echo "Refreshing generated compose files from templates while preserving client-specific values..."
 refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"

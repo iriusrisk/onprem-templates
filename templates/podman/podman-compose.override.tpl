@@ -14,8 +14,8 @@ services:
         target: DB_PRIVKEY_ASC
         type: env
     environment:
-      - IRIUS_DB_URL=jdbc:postgresql://\${POSTGRES_IP}:5432/iriusprod?user=iriusprod
-      - IRIUS_EXT_URL=https://\${HOST_NAME}
+      - IRIUS_DB_URL=jdbc:postgresql://${POSTGRES_IP}:5432/iriusprod?user=iriusprod
+      - IRIUS_EXT_URL=https://${HOST_NAME}
 
 secrets:
   db_pwd:

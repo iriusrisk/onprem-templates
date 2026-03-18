@@ -1890,6 +1890,14 @@ function capture_preserved_values() {
 		} | sort -u
 	)
 
+	if [[ ${#all_placeholders[@]} -eq 0 ]]; then
+		echo "ERROR: No placeholders discovered from templates." >&2
+		echo "  override_template=$override_template" >&2
+		echo "  jeff_template=$jeff_template" >&2
+		echo "  postgres_template=$postgres_template" >&2
+		exit 1
+	fi
+
 	echo "Preserving client-specific values from current compose files..."
 
 	for p in "${all_placeholders[@]}"; do

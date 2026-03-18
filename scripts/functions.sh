@@ -69,9 +69,88 @@ function prompt_postgres_option() {
 	POSTGRES_SETUP_OPTION="$pg_option"
 }
 
+: "${REGISTRY_URL:=docker.io}"
+: "${REGISTRY_NAMESPACE:=continuumsecurity/iriusrisk-prod}"
+: "${REGISTRY_USERNAME:=iriusrisk}"
+: "${POSTGRES_BASE_IMAGE:=docker.io/library/postgres:15.4}"
+
+function image_ref() {
+	local tag="$1"
+	echo "${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${tag}"
+}
+
+function prompt_registry_settings() {
+	if [ "${OFFLINE:-0}" -eq 1 ]; then
+		echo "Offline mode detected."
+		echo "Select option 1 if you are using the bundle images as provided (default tags)."
+		echo "Select option 2 only if you need to retag images to a custom registry/namespace."
+		echo
+	fi
+
+	echo "Container image source:"
+	echo "  1) Default IriusRisk registry"
+	echo "  2) Custom registry"
+
+	while true; do
+		read -rp "Enter 1 or 2: " registry_option
+		case "$registry_option" in
+			1)
+				REGISTRY_URL="docker.io"
+				REGISTRY_NAMESPACE="continuumsecurity/iriusrisk-prod"
+				REGISTRY_USERNAME="iriusrisk"
+				break
+				;;
+			2)
+				REGISTRY_URL=$(prompt_nonempty "Enter registry URL")
+				REGISTRY_NAMESPACE=$(prompt_nonempty "Enter image repository path (e.g. myteam/iriusrisk-prod)")
+				REGISTRY_USERNAME=$(prompt_nonempty "Enter registry username")
+				break
+				;;
+			*)
+				echo "Invalid input: '$registry_option'. Please enter 1 or 2."
+				;;
+		esac
+	done
+
+	export REGISTRY_URL REGISTRY_NAMESPACE REGISTRY_USERNAME
+}
+
 function prompt_registry_password() {
-	read -srp "Enter the container registry password for user 'iriusrisk': " REGISTRY_PASS
+	local registry_user="${REGISTRY_USERNAME:-iriusrisk}"
+	read -srp "Enter the container registry password for user '${registry_user}': " REGISTRY_PASS
 	echo
+}
+
+function prompt_postgres_image_source() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
+		export POSTGRES_BASE_IMAGE
+		echo "Using default PostgreSQL base image: $POSTGRES_BASE_IMAGE"
+		return 0
+	fi
+
+	echo "PostgreSQL base image source:"
+	echo "  1) Default public image (docker.io/library/postgres:15.4)"
+	echo "  2) Custom image"
+
+	while true; do
+		read -rp "Enter 1 or 2: " pg_img_option
+		case "$pg_img_option" in
+			1)
+				POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
+				break
+				;;
+			2)
+				POSTGRES_BASE_IMAGE=$(prompt_nonempty "Enter PostgreSQL base image reference")
+				break
+				;;
+			*)
+				echo "Invalid input: '$pg_img_option'. Please enter 1 or 2."
+				;;
+		esac
+	done
+
+	export POSTGRES_BASE_IMAGE
 }
 
 function prompt_for_docker_user() {
@@ -153,6 +232,12 @@ function install_docker() {
 	fi
 }
 
+function ensure_podman_network_kernel_modules() {
+	echo "Ensuring required Podman networking kernel modules are loaded..."
+	sudo modprobe ip_tables || true
+	sudo modprobe iptable_nat || true
+}
+
 function install_podman() {
 	echo "Installing Podman and podman-compose..."
 	sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true
@@ -160,6 +245,9 @@ function install_podman() {
 		sudo dnf install -y podman python3-pip
 		python3 -m pip install --upgrade --user podman-compose python-dotenv
 	}
+
+	# Ensure required networking kernel modules are loaded
+	ensure_podman_network_kernel_modules
 }
 
 function install_git() {
@@ -256,10 +344,17 @@ function install_and_configure_postgres() {
 		sg docker -c "$compose_tool -f $(basename "$postgres_file") up -d postgres"
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		local compose_tool="podman-compose"
-		# Build/refresh a tiny postgres image that decrypts at runtime (no plaintext on disk)
-		local base_image="docker.io/library/postgres:15.4"
 		local patched_image="localhost/postgres-gpg:15.4"
 		local tmp_name="temp-postgres"
+		local base_image
+
+		if [[ $OFFLINE -eq 0 ]]; then
+			prompt_postgres_image_source
+		fi
+		base_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
+
+		# Ensure required networking kernel modules are loaded before any podman networking work
+		ensure_podman_network_kernel_modules
 
 		# Create and encrypt db pass secret
 		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
@@ -314,6 +409,9 @@ EOF
 		if [[ -n $ids ]]; then podman rm -f $ids || true; fi
 
 		sudo rm -rf ./postgres/data
+
+		# Ensure required networking kernel modules are loaded again before compose up
+		ensure_podman_network_kernel_modules
 
 		# Bring up just Postgres (with secrets override)
 		eval "$compose_tool -f $(basename "$postgres_file") up -d postgres"
@@ -492,10 +590,11 @@ function create_certificates() {
 	echo "📄 Certificates present in $CERT_DIR"
 }
 
-function is_logged_in_as_iriusrisk() {
+function is_logged_in_to_registry_user() {
+	local expected_user="${REGISTRY_USERNAME:-iriusrisk}"
+	local auth_key_primary="${REGISTRY_URL:-docker.io}"
+	local auth_key_dockerhub_alt="https://index.docker.io/v1/"
 	local config_candidates=()
-	local auth_key_dockerhub1="docker.io"
-	local auth_key_dockerhub2="https://index.docker.io/v1/"
 	local auth_base64=""
 	local auth_user=""
 
@@ -515,35 +614,36 @@ function is_logged_in_as_iriusrisk() {
 	for cfg in "${config_candidates[@]}"; do
 		[[ -f $cfg ]] || continue
 		if [[ $cfg == "/run/containers/0/auth.json" ]]; then
-			auth_base64=$(sudo jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
+			auth_base64=$(sudo jq -r ".auths[\"$auth_key_primary\"].auth // .auths[\"$auth_key_dockerhub_alt\"].auth // empty" "$cfg" 2>/dev/null)
 		else
-			auth_base64=$(jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
+			auth_base64=$(jq -r ".auths[\"$auth_key_primary\"].auth // .auths[\"$auth_key_dockerhub_alt\"].auth // empty" "$cfg" 2>/dev/null)
 		fi
 		[[ -n $auth_base64 ]] && break
 	done
 
 	[[ -z $auth_base64 ]] && return 1
 	auth_user=$(echo "$auth_base64" | base64 -d 2>/dev/null | cut -d: -f1)
-	[[ $auth_user == "iriusrisk" ]]
+	[[ $auth_user == "$expected_user" ]]
 }
 
 function container_registry_login() {
-	local registry_url="${1:-}"
+	local registry_url="${REGISTRY_URL:-docker.io}"
+	local registry_user="${REGISTRY_USERNAME:-iriusrisk}"
 
-	if is_logged_in_as_iriusrisk $CONTAINER_ENGINE; then
-		echo "Already logged in to Docker Hub as 'iriusrisk', skipping login prompt."
+	if is_logged_in_to_registry_user; then
+		echo "Already logged in to registry '$registry_url' as '$registry_user', skipping login prompt."
 		return 0
 	fi
 
-	prompt_registry_password
+	[[ -z ${REGISTRY_PASS:-} ]] && prompt_registry_password
 
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
-		echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
+		echo "$REGISTRY_PASS" | docker login "$registry_url" -u "$registry_user" --password-stdin
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		if [[ "$(id -u)" -eq 0 ]]; then
-			echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
+			echo "$REGISTRY_PASS" | sudo podman login "$registry_url" -u "$registry_user" --password-stdin
 		else
-			echo "$REGISTRY_PASS" | podman login -u iriusrisk docker.io --password-stdin
+			echo "$REGISTRY_PASS" | podman login "$registry_url" -u "$registry_user" --password-stdin
 		fi
 	else
 		echo "Unknown container engine: $CONTAINER_ENGINE" >&2
@@ -627,17 +727,22 @@ function build_podman_custom_images() {
 	# Clean any temp containers
 	podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
 
+	local nginx_image
+	local tomcat_image
+	nginx_image="$(image_ref "nginx")"
+	tomcat_image="$(image_ref "tomcat-${tv}")"
+
 	if [ "$OFFLINE" -eq 0 ]; then
 		echo "Pulling base images..."
-		podman pull docker.io/continuumsecurity/iriusrisk-prod:nginx >/dev/null
-		podman pull "docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >/dev/null || {
-			echo "ERROR: Unable to pull docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >&2
+		podman pull "$nginx_image" >/dev/null
+		podman pull "$tomcat_image" >/dev/null || {
+			echo "ERROR: Unable to pull $tomcat_image" >&2
 			return 1
 		}
 	fi
 
 	echo "Customizing nginx → localhost/nginx-rhel"
-	podman run --name temp-nginx --user root --entrypoint /bin/sh docker.io/continuumsecurity/iriusrisk-prod:nginx \
+	podman run --name temp-nginx --user root --entrypoint /bin/sh "$nginx_image" \
 		-c "set -eu; \
         if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
             (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
@@ -655,7 +760,7 @@ function build_podman_custom_images() {
 		--name temp-tomcat \
 		--user root \
 		--entrypoint /bin/sh \
-		"docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" \
+		"$tomcat_image" \
 		-c '\
       set -eu; \
       if [ -f /etc/alpine-release ]; then \
@@ -968,20 +1073,21 @@ EOF
 # Usage: update_component_tag startleft "$SL_VER"
 function update_component_tag() {
 	local comp="$1" ver="$2"
+	local registry_url_escaped registry_ns_escaped
+
 	[[ -z $ver ]] && {
 		echo "NOTE: No version provided for $comp in JSON; skipping."
 		return 0
 	}
 
-	# Match:
-	#   image: docker.io/continuumsecurity/iriusrisk-prod:<comp>
-	#   image: docker.io/continuumsecurity/iriusrisk-prod:<comp>-<digits[.digits...]>
-	# (docker.io/ prefix optional; whitespace & comments preserved)
-	if grep -qE "^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
+	registry_url_escaped=$(printf '%s' "${REGISTRY_URL:-docker.io}" | sed 's/[.[\*^$()+?{|]/\\&/g')
+	registry_ns_escaped=$(printf '%s' "${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}" | sed 's/[.[\*^$()+?{|]/\\&/g')
+
+	if grep -qE "^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
 		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
+			"s@(^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
 			"$COMPOSE_YML"
-		echo "Updated ${comp} image tag → docker.io/continuumsecurity/iriusrisk-prod:${comp}-${ver}"
+		echo "Updated ${comp} image tag → ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${comp}-${ver}"
 	else
 		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
 	fi
@@ -1036,6 +1142,11 @@ function detect_engine_ctx() {
 	SERVICE_NAME="iriusrisk-$CONTAINER_ENGINE.service"
 	NEED_DOCKER_CFG=""
 
+	local extra_registry_env=""
+	if [[ ${REGISTRY_URL:-docker.io} != "docker.io" || ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} != "continuumsecurity/iriusrisk-prod" ]]; then
+		extra_registry_env=$'\nEnvironment=REGISTRY_URL='"${REGISTRY_URL}"$'\nEnvironment=REGISTRY_NAMESPACE='"${REGISTRY_NAMESPACE}"
+	fi
+
 	case "$ENGINE" in
 		docker)
 			COMPOSE_INVOKE="docker-compose"
@@ -1045,7 +1156,7 @@ function detect_engine_ctx() {
 			SYSTEMCTL="sudo systemctl"
 			UNIT_AFTER=$'After=network.target docker.service'
 			UNIT_REQUIRES=$'Requires=docker.service'
-			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'
+			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'"${extra_registry_env}"
 			NEED_DOCKER_CFG="true"
 			;;
 		podman)
@@ -1056,7 +1167,7 @@ function detect_engine_ctx() {
 			SYSTEMCTL="systemctl --user"
 			UNIT_AFTER=$'After=network-online.target\nWants=network-online.target'
 			UNIT_REQUIRES=""
-			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'
+			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'"${extra_registry_env}"
 			;;
 		*)
 			echo "Unknown engine '$ENGINE'." >&2
@@ -1099,6 +1210,9 @@ function deploy_stack() {
 	fi
 
 	if [[ $ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
+		# Ensure required networking kernel modules are loaded before podman compose/network work
+		ensure_podman_network_kernel_modules
+
 		# Build custom images for Podman
 		build_podman_custom_images
 	fi
@@ -1607,8 +1721,79 @@ function offline_load_images() {
 		fi
 	done
 
+	# Retag bundle-loaded images to the registry/namespace selected for this deployment.
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"nginx-rhel" \
+		"$(image_ref "nginx")"
+
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"tomcat-rhel" \
+		"$(image_ref "tomcat-$(tr -d '[:space:]' <"${OFFLINE_BUNDLE_DIR}/iriusrisk_version")")"
+
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"startleft" \
+		"$(image_ref "startleft")"
+
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"reporting-module" \
+		"$(image_ref "reporting-module")"
+
 	echo "[offline] Done. Current images:"
 	podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Created}}\t{{.Size}}"
+}
+
+function retag_offline_component_from_bundle_if_needed() {
+	local img_dir="$1"
+	local component="$2"
+	local target_ref="$3"
+
+	local tarball=""
+	local base=""
+	local source_ref=""
+
+	tarball="$(find "$img_dir" -maxdepth 1 -type f -name "*${component}.oci.tar" | head -n1)"
+	[[ -z $tarball ]] && {
+		echo "[offline] WARNING: no archive found for component '$component'"
+		return 0
+	}
+
+	base="$(basename "$tarball" .oci.tar)"
+
+	if [[ $base == localhost_* ]]; then
+		if [[ $base == localhost_nginx-rhel ]]; then
+			source_ref="localhost/nginx-rhel:latest"
+		elif [[ $base == localhost_tomcat-rhel ]]; then
+			source_ref="localhost/tomcat-rhel:latest"
+		elif [[ $base == localhost_postgres-gpg_15.4 ]]; then
+			source_ref="localhost/postgres-gpg:15.4"
+		else
+			echo "[offline] WARNING: unsupported localhost archive name: $(basename "$tarball")"
+			return 0
+		fi
+	else
+		source_ref="$(_ref_from_filename "$base")"
+	fi
+
+	if [[ -z $source_ref ]]; then
+		echo "[offline] WARNING: could not derive source ref for '$component' from $(basename "$tarball")"
+		return 0
+	fi
+
+	if [[ $source_ref == "$target_ref" ]]; then
+		echo "[offline] No retag needed for $component ($source_ref)"
+		return 0
+	fi
+
+	if podman image exists "$source_ref"; then
+		echo "[offline] Retagging $source_ref -> $target_ref"
+		podman tag "$source_ref" "$target_ref"
+	else
+		echo "[offline] WARNING: source image not found after load: $source_ref"
+	fi
 }
 
 function ensure_subids_for_user() {

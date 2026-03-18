@@ -85,90 +85,103 @@ fi
 printf '%s\n' "$PREV_VERSION" >/tmp/iriusrisk_previous_version.txt || true
 echo "Detected current IriusRisk version (pre-upgrade): $PREV_VERSION"
 
+prompt_registry_settings
+
 # —————————————————————————————————————————————————————————————
-# 3. Discover highest tomcat tag (Hub API v2, private repo) & choose version
+# 3. Registry settings + discover highest tomcat tag when applicable
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
-	REPO_NS="continuumsecurity"
-	REPO_NAME="iriusrisk-prod"
-	HUB_LOGIN_URL="https://hub.docker.com/v2/users/login/"
-	TAGS_URL_BASE="https://hub.docker.com/v2/repositories/${REPO_NS}/${REPO_NAME}/tags"
-	echo "Discovering tomcat tags on Docker Hub for ${REPO_NS}/${REPO_NAME} ..."
 
-	# Ensure we have a password; your helper already sets REGISTRY_PASS
-	[[ -z ${REGISTRY_PASS:-} ]] && prompt_registry_password
-
-	# Obtain Hub JWT (separate from docker login credential store)
-	HUB_TOKEN="$(
-		curl -fsSL -H 'Content-Type: application/json' \
-			-d "{\"username\":\"iriusrisk\",\"password\":\"${REGISTRY_PASS}\"}" \
-			"${HUB_LOGIN_URL}" 2>/dev/null | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
-	)" || true
-
-	if [[ -z $HUB_TOKEN || $HUB_TOKEN == "null" ]]; then
-		echo "WARNING: Hub login failed; you can still type the version manually."
-	fi
-
-	# Gather tomcat-* tags from Hub API (paginate via .next)
-	versions=()
-	if [[ -n $HUB_TOKEN ]]; then
-		url="${TAGS_URL_BASE}?page_size=100&name=tomcat"
-		while [[ -n $url ]]; do
-			page="$(curl -fsSL -H "Authorization: JWT ${HUB_TOKEN}" "$url" 2>/dev/null || true)"
-			[[ -z $page ]] && break
-
-			if command -v jq >/dev/null 2>&1; then
-				while IFS= read -r tag; do
-					[[ $tag =~ ^tomcat-([0-9]+(\.[0-9]+){0,2})$ ]] && versions+=("${tag#tomcat-}")
-				done < <(printf '%s' "$page" | jq -r '.results[].name' 2>/dev/null)
-				next="$(printf '%s' "$page" | jq -r '.next // empty')"
-			else
-				while IFS= read -r tag; do
-					tag="${tag#\"}"
-					tag="${tag%\"}"
-					[[ $tag =~ ^tomcat-([0-9]+(\.[0-9]+){0,2})$ ]] && versions+=("${tag#tomcat-}")
-				done < <(printf '%s' "$page" | grep -o '"name"[[:space:]]*:[[:space:]]*"tomcat-[^"]*"' | sed -E 's/.*"tomcat-/tomcat-/' | sed -E 's/"$//')
-				next="$(printf '%s' "$page" | grep -o '"next"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*:"(.*)"/\1/')"
-				[[ $next == "null" ]] && next=""
-			fi
-
-			url="$next"
-		done
-	fi
-
-	# Choose default: prefer full semver X.Y.Z; else highest major
-	DEFAULT_VERSION=""
-	if [[ ${#versions[@]} -gt 0 ]]; then
-		full=() majors=()
-		for v in "${versions[@]}"; do
-			[[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && full+=("$v") || majors+=("$v")
-		done
-		if [[ ${#full[@]} -gt 0 ]]; then
-			mapfile -t sorted_full < <(printf '%s\n' "${full[@]}" | sort -uV)
-			DEFAULT_VERSION="${sorted_full[-1]}"
-		elif [[ ${#majors[@]} -gt 0 ]]; then
-			mapfile -t sorted_maj < <(printf '%s\n' "${majors[@]}" | sort -u)
-			DEFAULT_VERSION="${sorted_maj[-1]}"
-		fi
-	fi
-	[[ -z $DEFAULT_VERSION ]] && DEFAULT_VERSION="4"
-	echo "Highest available tomcat version (Hub): $DEFAULT_VERSION"
-
-	read -r -p "Version to upgrade to [${DEFAULT_VERSION}]: " CHOSEN_VERSION
-	[[ -z $CHOSEN_VERSION ]] && CHOSEN_VERSION="$DEFAULT_VERSION"
-	if [[ ! $CHOSEN_VERSION =~ ^[0-9]+$ && ! $CHOSEN_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-		echo "ERROR: Version must be 'N' or 'N.N.N' (e.g., 4 or 4.46.9). You entered: $CHOSEN_VERSION" >&2
-		exit 6
-	fi
-
-	TARGET_TAG="tomcat-$CHOSEN_VERSION"
 	COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
 	[[ -f $COMPOSE_YML ]] || {
 		echo "ERROR: Compose file not found: $COMPOSE_YML" >&2
 		exit 4
 	}
+
+	if [[ ${REGISTRY_URL:-docker.io} != "docker.io" ]]; then
+		echo "Custom registry selected: skipping Docker Hub tag discovery."
+		read -r -p "Version to upgrade to: " CHOSEN_VERSION
+		if [[ ! $CHOSEN_VERSION =~ ^[0-9]+$ && ! $CHOSEN_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+			echo "ERROR: Version must be 'N' or 'N.N.N' (e.g., 4 or 4.46.9). You entered: $CHOSEN_VERSION" >&2
+			exit 6
+		fi
+	else
+		REPO_NS="${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}"
+		HUB_LOGIN_URL="https://hub.docker.com/v2/users/login/"
+		TAGS_URL_BASE="https://hub.docker.com/v2/repositories/${REPO_NS}/tags"
+		echo "Discovering tomcat tags on Docker Hub for ${REPO_NS} ..."
+
+		# Ensure we have a password; helper will prompt if needed
+		[[ -z ${REGISTRY_PASS:-} ]] && prompt_registry_password
+
+		# Obtain Hub JWT (separate from docker login credential store)
+		HUB_TOKEN="$(
+			curl -fsSL -H 'Content-Type: application/json' \
+				-d "{\"username\":\"${REGISTRY_USERNAME:-iriusrisk}\",\"password\":\"${REGISTRY_PASS}\"}" \
+				"${HUB_LOGIN_URL}" 2>/dev/null | sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+		)" || true
+
+		if [[ -z $HUB_TOKEN || $HUB_TOKEN == "null" ]]; then
+			echo "WARNING: Hub login failed; you can still type the version manually."
+		fi
+
+		# Gather tomcat-* tags from Hub API (paginate via .next)
+		versions=()
+		if [[ -n $HUB_TOKEN ]]; then
+			url="${TAGS_URL_BASE}?page_size=100&name=tomcat"
+			while [[ -n $url ]]; do
+				page="$(curl -fsSL -H "Authorization: JWT ${HUB_TOKEN}" "$url" 2>/dev/null || true)"
+				[[ -z $page ]] && break
+
+				if command -v jq >/dev/null 2>&1; then
+					while IFS= read -r tag; do
+						[[ $tag =~ ^tomcat-([0-9]+(\.[0-9]+){0,2})$ ]] && versions+=("${tag#tomcat-}")
+					done < <(printf '%s' "$page" | jq -r '.results[].name' 2>/dev/null)
+					next="$(printf '%s' "$page" | jq -r '.next // empty')"
+				else
+					while IFS= read -r tag; do
+						tag="${tag#\"}"
+						tag="${tag%\"}"
+						[[ $tag =~ ^tomcat-([0-9]+(\.[0-9]+){0,2})$ ]] && versions+=("${tag#tomcat-}")
+					done < <(printf '%s' "$page" | grep -o '"name"[[:space:]]*:[[:space:]]*"tomcat-[^"]*"' | sed -E 's/.*"tomcat-/tomcat-/' | sed -E 's/"$//')
+					next="$(printf '%s' "$page" | grep -o '"next"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*:"(.*)"/\1/')"
+					[[ $next == "null" ]] && next=""
+				fi
+
+				url="$next"
+			done
+		fi
+
+		# Choose default: prefer full semver X.Y.Z; else highest major
+		DEFAULT_VERSION=""
+		if [[ ${#versions[@]} -gt 0 ]]; then
+			full=() majors=()
+			for v in "${versions[@]}"; do
+				[[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && full+=("$v") || majors+=("$v")
+			done
+			if [[ ${#full[@]} -gt 0 ]]; then
+				mapfile -t sorted_full < <(printf '%s\n' "${full[@]}" | sort -uV)
+				DEFAULT_VERSION="${sorted_full[-1]}"
+			elif [[ ${#majors[@]} -gt 0 ]]; then
+				mapfile -t sorted_maj < <(printf '%s\n' "${majors[@]}" | sort -u)
+				DEFAULT_VERSION="${sorted_maj[-1]}"
+			fi
+		fi
+		[[ -z $DEFAULT_VERSION ]] && DEFAULT_VERSION="4"
+		echo "Highest available tomcat version (Hub): $DEFAULT_VERSION"
+
+		read -r -p "Version to upgrade to [${DEFAULT_VERSION}]: " CHOSEN_VERSION
+		[[ -z $CHOSEN_VERSION ]] && CHOSEN_VERSION="$DEFAULT_VERSION"
+		if [[ ! $CHOSEN_VERSION =~ ^[0-9]+$ && ! $CHOSEN_VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+			echo "ERROR: Version must be 'N' or 'N.N.N' (e.g., 4 or 4.46.9). You entered: $CHOSEN_VERSION" >&2
+			exit 6
+		fi
+	fi
+
+	TARGET_TAG="tomcat-$CHOSEN_VERSION"
 else
 	CHOSEN_VERSION=$(tr -d '[:space:]' <"${OFFLINE_BUNDLE_DIR}/iriusrisk_version")
+	COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
 fi
 
 # —————————————————————————————————————————————————————————————
@@ -252,16 +265,15 @@ echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
 # —————————————————————————————————————————————————————————————
 
 if [ "$OFFLINE" -eq 1 ]; then
-	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:startleft \
-		docker.io_continuumsecurity_iriusrisk-prod_startleft.oci.tar
+	copy_with_fullref "$(image_ref "startleft")" \
+		"$(image_ref "startleft" | sed 's#/#_#g; s#:#_#g').oci.tar"
 
-	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:reporting-module \
-		docker.io_continuumsecurity_iriusrisk-prod_reporting-module.oci.tar
+	copy_with_fullref "$(image_ref "reporting-module")" \
+		"$(image_ref "reporting-module" | sed 's#/#_#g; s#:#_#g').oci.tar"
 
 	# Ensure your local custom images exist
-	# nginx:
 	podman image exists localhost/nginx-rhel:latest || die "Missing image: localhost/nginx-rhel:latest"
-	# tomcat: ensure we have :latest (retag if only versioned exists)
+
 	if ! podman image exists localhost/tomcat-rhel:latest; then
 		if podman image exists "localhost/tomcat-rhel:tomcat-$TOMCAT_V"; then
 			echo "Retagging localhost/tomcat-rhel:tomcat-$TOMCAT_V -> localhost/tomcat-rhel:latest"
@@ -270,10 +282,9 @@ if [ "$OFFLINE" -eq 1 ]; then
 			die "Missing image: localhost/tomcat-rhel:(latest or tomcat-$TOMCAT_V)"
 		fi
 	fi
-	# postgres:
+
 	podman image exists localhost/postgres-gpg:15.4 || die "Missing image: localhost/postgres-gpg:15.4"
 
-	# Save local custom images with embedded refs
 	save_local_with_fullref localhost/nginx-rhel:latest localhost_nginx-rhel.oci.tar
 	save_local_with_fullref localhost/tomcat-rhel:latest localhost_tomcat-rhel.oci.tar
 	save_local_with_fullref localhost/postgres-gpg:15.4 localhost_postgres-gpg_15.4.oci.tar
@@ -305,14 +316,13 @@ fi
 # 10. Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
-	# Update ONLY Tomcat line (matches major-only or full semver; docker.io prefix optional)
-	if grep -qE '^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:tomcat-[0-9.]+([[:space:]]|$)' "$COMPOSE_YML"; then
+	if grep -qE '^[[:space:]]*image:[[:space:]]*\$\{REGISTRY_URL:-docker\.io\}/\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-[0-9.]+' "$COMPOSE_YML"; then
 		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
+			"s@(^[[:space:]]*image:[[:space:]]*\\\$\{REGISTRY_URL:-docker\.io\}/\\\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
 			"$COMPOSE_YML"
-		echo "Updated tomcat image tag → docker.io/continuumsecurity/iriusrisk-prod:tomcat-${CHOSEN_VERSION}"
+		echo "Updated tomcat image tag → \${REGISTRY_URL:-docker.io}/\${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:tomcat-${CHOSEN_VERSION}"
 	else
-		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
+		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected variable-based ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
 		exit 5
 	fi
 else
@@ -355,6 +365,10 @@ if [[ $CONTAINER_ENGINE == "docker" ]]; then
 	container_registry_login
 fi
 
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	ensure_podman_network_kernel_modules
+fi
+
 $CONTAINER_ENGINE system prune -f
 cd "$COMPOSE_DIR"
 
@@ -369,6 +383,10 @@ else
 fi
 
 echo "Restarting stack to complete upgrade"
+
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	ensure_podman_network_kernel_modules
+fi
 
 # Spin up IriusRisk stack
 $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d

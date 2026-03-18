@@ -82,6 +82,7 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
    - Launch `one-click.sh`
 
 3. **Answer interactive prompts**:
+   - Select container registry (default or custom)
    - Decide how to set up PostgreSQL (internal container or external DB)
    - Provide hostname
    - Confirm deployment
@@ -344,6 +345,215 @@ To migrate an existing IriusRisk on-prem installation to the new template-based 
   export TMPDIR=${XDG_RUNTIME_DIR}
   ```
   Log out and back in to pick this up.
+
+---
+
+## Container Registry Configuration
+
+The deployment supports both the default IriusRisk container registry and custom container registries.
+
+During installation you will be prompted to select the image source:
+
+1) Default IriusRisk registry
+2) Custom registry
+
+### Default Registry
+
+If the default registry is selected, images are pulled from:
+
+docker.io/continuumsecurity/iriusrisk-prod
+
+Example images:
+
+docker.io/continuumsecurity/iriusrisk-prod:nginx
+docker.io/continuumsecurity/iriusrisk-prod:tomcat-4
+docker.io/continuumsecurity/iriusrisk-prod:startleft
+docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+
+### Custom Registry
+
+If a custom registry is selected, the installer will ask for:
+
+- Registry URL
+- Image repository path
+- Registry username
+- Registry password/token
+
+Example configuration:
+
+Registry URL:
+docker.io
+
+Repository path:
+myorg/iriusrisk-prod
+
+Images will then be resolved as:
+
+docker.io/myorg/iriusrisk-prod:nginx
+docker.io/myorg/iriusrisk-prod:tomcat-4
+docker.io/myorg/iriusrisk-prod:startleft
+docker.io/myorg/iriusrisk-prod:reporting-module
+
+This allows organizations to mirror or host IriusRisk images in their own container registry.
+
+
+## Network Requirements
+
+For fully automated installation, the server must be able to access several external services.
+
+If your environment restricts outbound internet traffic, the following destinations must be allowed.
+
+### Git Repository
+
+Required to download the deployment templates.
+
+https://github.com
+https://raw.githubusercontent.com
+
+Example usage:
+
+curl https://raw.githubusercontent.com/iriusrisk/onprem-templates/...
+git clone https://github.com/iriusrisk/onprem-templates.git
+
+---
+
+### Container Registry
+
+Required to download IriusRisk container images.
+
+Default registry:
+
+docker.io
+registry-1.docker.io
+auth.docker.io
+
+Example images:
+
+docker.io/continuumsecurity/iriusrisk-prod:nginx
+docker.io/continuumsecurity/iriusrisk-prod:tomcat-*
+docker.io/continuumsecurity/iriusrisk-prod:startleft
+docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+
+If a custom registry is used, access must be allowed to that registry instead.
+
+---
+
+### OS Package Repositories
+
+The installer automatically installs required packages depending on the distribution.
+
+Typical repositories include:
+
+**Ubuntu / Debian**
+
+archive.ubuntu.com
+security.ubuntu.com
+
+**RHEL / Rocky / AlmaLinux**
+
+dl.fedoraproject.org
+mirrorlist.centos.org
+
+**Amazon Linux**
+
+amazonlinux.*.amazonaws.com
+
+For Podman-based installations on RHEL-compatible systems, the installer also downloads the EPEL release package from:
+
+https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+
+---
+
+### PostgreSQL Image
+
+If internal PostgreSQL is used, the default base image is:
+
+docker.io/library/postgres:15.4
+
+If a custom PostgreSQL image is selected during setup, access must be allowed to that image registry as well.
+
+---
+
+### Additional Package Sources Used During Podman Image Customization
+
+For Podman deployments, the script customizes local `nginx` and `tomcat` images in `build_podman_custom_images()`.
+
+During that step, additional packages may be installed **inside the container image** depending on the base image being used. This can require outbound access to upstream package repositories such as:
+
+**Alpine-based images**
+
+https://dl-cdn.alpinelinux.org
+http://nginx.org
+
+**Debian / Ubuntu-based images**
+
+http://deb.debian.org
+http://security.debian.org
+http://apt.postgresql.org
+
+The exact repositories contacted depend on the base image contents and package manager used by the source image.
+
+---
+
+### Optional External Services
+
+If you configure external PostgreSQL or custom container registries, network access must be allowed accordingly.
+
+---
+
+### Fully Air-Gapped Environments
+
+If outbound internet access is not allowed, deployment can still be performed using offline mode. 
+To use offline mode, request the offline bundle from the support team and copy it to the target host.
+
+### Install using offline bundle
+
+Assuming the bundle file is named `iriusrisk-offline-bundle-4-install.tar.gz` and will be copied to the user home directory:
+
+```bash
+scp iriusrisk-offline-bundle-4-install.tar.gz user@your-instance:/home/user/
+ssh user@your-instance
+
+tar -xf iriusrisk-offline-bundle-4-install.tar.gz
+cd ~/irius-offline-bundle/onprem-templates/scripts
+
+./one-click.sh --offline --bundle "$HOME/irius-offline-bundle"
+
+```
+
+### Upgrade using offline bundle
+
+```bash
+
+scp iriusrisk-offline-bundle-4-install.tar.gz user@your-instance:/home/user/
+ssh user@your-instance
+
+tar -xf iriusrisk-offline-bundle-4-install.tar.gz
+cd ~/irius-offline-bundle/onprem-templates/scripts
+
+./upgrade.sh --offline --bundle "$HOME/irius-offline-bundle"
+
+```
+
+---
+
+## Supported Operating Systems
+
+The deployment scripts have been tested on the following Linux distributions:
+
+- **RHEL 9**
+- **Rocky Linux 9.7**
+- **Amazon Linux 2023**
+- **Ubuntu 22.04**
+
+Other RHEL 9 compatible distributions (such as AlmaLinux 9) may also work but have not been explicitly tested.
+
+> ⚠️ RHEL/Rocky **10 and newer releases are not currently supported**.
+
+The installation automatically detects the container engine and will use:
+
+- **Podman** on RHEL-based systems
+- **Docker** on Ubuntu and Amazon Linux systems
 
 ---
 

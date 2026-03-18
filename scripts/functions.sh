@@ -606,9 +606,11 @@ function build_podman_secret_image() {
 	local commit_cmd="${8:-}"
 	local wrapper_file final_exec_file
 
-	local original_entrypoint_json original_cmd_json original_entrypoint_exec
+	local original_entrypoint_json original_cmd_json original_entrypoint_exec original_user
+
 	original_entrypoint_json="$(podman image inspect --format '{{json .Config.Entrypoint}}' "$base_image" 2>/dev/null || echo null)"
 	original_cmd_json="$(podman image inspect --format '{{json .Config.Cmd}}' "$base_image" 2>/dev/null || echo null)"
+	original_user="$(podman image inspect --format '{{.Config.User}}' "$base_image" 2>/dev/null || true)"
 
 	if command -v python3 >/dev/null 2>&1; then
 		original_entrypoint_exec="$(
@@ -661,6 +663,7 @@ export_from_secret_env() {
 
 ${secret_snippet}
 EOF
+
 	if [[ -n $final_exec ]]; then
 		cat >>"$wrapper_file" <<'EOF'
 
@@ -669,13 +672,9 @@ if [ -r /usr/local/bin/podman-secret-final-exec ]; then
 fi
 EOF
 	elif [[ -n $original_entrypoint_exec ]]; then
-		printf '
-exec %s "$@"
-' "$original_entrypoint_exec" >>"$wrapper_file"
+		printf '\nexec %s "$@"\n' "$original_entrypoint_exec" >>"$wrapper_file"
 	else
-		printf '
-exec "$@"
-' >>"$wrapper_file"
+		printf '\nexec "$@"\n' >>"$wrapper_file"
 	fi
 
 	podman rm -f "$tmp_name" 2>/dev/null || true
@@ -686,6 +685,7 @@ exec "$@"
 		"$base_image" \
 		-c 'sleep infinity' >/dev/null
 	podman start "$tmp_name" >/dev/null
+
 	podman exec "$tmp_name" /bin/sh -c "set -eu; \
 		if [ -f /etc/alpine-release ]; then \
 			apk add --no-cache gnupg python3; \
@@ -696,7 +696,9 @@ exec "$@"
 		fi; \
 		${setup_snippet:-:}; \
 		mkdir -p /usr/local/bin"
+
 	podman cp "$wrapper_file" "$tmp_name:/usr/local/bin/podman-secret-wrapper.sh"
+
 	if [[ -n $final_exec ]]; then
 		final_exec_file="$(mktemp)"
 		printf '%s\n' "$final_exec" >"$final_exec_file"
@@ -704,17 +706,23 @@ exec "$@"
 		podman exec "$tmp_name" chmod 755 /usr/local/bin/podman-secret-final-exec
 		rm -f "$final_exec_file"
 	fi
+
 	podman exec "$tmp_name" chmod 755 /usr/local/bin/podman-secret-wrapper.sh
 	podman stop "$tmp_name" >/dev/null
 	rm -f "$wrapper_file"
 
 	local commit_args=(--change='ENTRYPOINT ["/usr/local/bin/podman-secret-wrapper.sh"]')
+
 	if [[ -n $run_as_user ]]; then
 		commit_args+=(--change="USER ${run_as_user}")
+	elif [[ -n $original_user && $original_user != "<no value>" ]]; then
+		commit_args+=(--change="USER ${original_user}")
 	fi
+
 	if [[ $original_cmd_json != "null" && -n $original_cmd_json ]]; then
 		commit_args+=(--change="CMD ${original_cmd_json}")
 	fi
+
 	if [[ -n $commit_cmd ]]; then
 		commit_args+=(--change="CMD ${commit_cmd}")
 	fi

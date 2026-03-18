@@ -59,11 +59,6 @@ echo
 # Set engine and Postgres options, update templates
 # —————————————————————————————————————————————————————————————
 prompt_engine
-JEFF_ENABLED=$(prompt_yn "Are you using Jeff?")
-export JEFF_ENABLED
-
-echo "Refreshing generated compose files from templates while preserving client-specific values..."
-refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"
 
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
 prompt_postgres_option upgrade
@@ -90,6 +85,190 @@ if [[ $pre_code == "200" && -n $pre_json ]]; then
 fi
 printf '%s\n' "$PREV_VERSION" >/tmp/iriusrisk_previous_version.txt || true
 echo "Detected current IriusRisk version (pre-upgrade): $PREV_VERSION"
+
+# —————————————————————————————————————————————————————————————
+# Backup service
+# —————————————————————————————————————————————————————————————
+
+BDIR="${BDIR:-/home/$USER/irius_backups}"
+mkdir -p "$BDIR"
+
+case "$CONTAINER_ENGINE" in
+	docker)
+		UNIT_PATH="/etc/systemd/system/iriusrisk-docker.service"
+		UNIT_BACKUP="$BDIR/iriusrisk-docker.service.pre-upgrade.bak"
+		if [[ -f $UNIT_PATH ]]; then
+			sudo cp "$UNIT_PATH" "$UNIT_BACKUP"
+			echo "Backed up service unit: $UNIT_PATH -> $UNIT_BACKUP"
+		else
+			echo "WARNING: Service unit not found, nothing to back up: $UNIT_PATH"
+		fi
+		;;
+	podman)
+		UNIT_PATH="$HOME/.config/systemd/user/iriusrisk-podman.service"
+		UNIT_BACKUP="$BDIR/iriusrisk-podman.service.pre-upgrade.bak"
+		if [[ -f $UNIT_PATH ]]; then
+			cp "$UNIT_PATH" "$UNIT_BACKUP"
+			echo "Backed up service unit: $UNIT_PATH -> $UNIT_BACKUP"
+		else
+			echo "WARNING: Service unit not found, nothing to back up: $UNIT_PATH"
+		fi
+		;;
+	*)
+		echo "ERROR: Unsupported engine: $CONTAINER_ENGINE" >&2
+		exit 1
+		;;
+esac
+
+# —————————————————————————————————————————————————————————————
+# Backup DB
+# —————————————————————————————————————————————————————————————
+backup_db
+
+# —————————————————————————————————————————————————————————————
+# Backup original compose files + certificates + SAML files (if any)
+# —————————————————————————————————————————————————————————————
+# Assumes: COMPOSE_DIR, BDIR, VERSION, TS set
+TMP_COMPOSE_TAR="/tmp/irius.compose.$TS.tar.gz"
+OUT_COMPOSE_TAR="$BDIR/irius.compose.$VERSION.tar.gz"
+
+echo "Backing up contents of: $COMPOSE_DIR"
+
+if [[ ! -d $COMPOSE_DIR ]]; then
+	echo "ERROR: COMPOSE_DIR does not exist: $COMPOSE_DIR"
+	exit 1
+fi
+
+# Create tar.gz, excluding the postgres directory if it exists
+tar -C "$COMPOSE_DIR" --exclude='./postgres' -czf "$TMP_COMPOSE_TAR" .
+
+# Replace any previous archives for this run
+rm -f "$BDIR"/irius.compose.*.tar.gz || true
+mv -f "$TMP_COMPOSE_TAR" "$OUT_COMPOSE_TAR"
+
+C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
+echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
+
+# —————————————————————————————————————————————————————————————
+# Backup original container images (offline mode only)
+# —————————————————————————————————————————————————————————————
+
+if [ "$OFFLINE" -eq 1 ]; then
+	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:startleft \
+		docker.io_continuumsecurity_iriusrisk-prod_startleft.oci.tar
+
+	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:reporting-module \
+		docker.io_continuumsecurity_iriusrisk-prod_reporting-module.oci.tar
+
+	# Ensure your local custom images exist
+	# nginx:
+	podman image exists localhost/nginx-rhel:latest || die "Missing image: localhost/nginx-rhel:latest"
+	# tomcat: ensure we have :latest (retag if only versioned exists)
+	if ! podman image exists localhost/tomcat-rhel:latest; then
+		if podman image exists "localhost/tomcat-rhel:tomcat-$TOMCAT_V"; then
+			echo "Retagging localhost/tomcat-rhel:tomcat-$TOMCAT_V -> localhost/tomcat-rhel:latest"
+			podman tag "localhost/tomcat-rhel:tomcat-$TOMCAT_V" localhost/tomcat-rhel:latest
+		else
+			die "Missing image: localhost/tomcat-rhel:(latest or tomcat-$TOMCAT_V)"
+		fi
+	fi
+	# postgres:
+	podman image exists localhost/postgres-gpg:15.4 || die "Missing image: localhost/postgres-gpg:15.4"
+
+	# Save local custom images with embedded refs
+	save_local_with_fullref localhost/nginx-rhel:latest localhost_nginx-rhel.oci.tar
+	save_local_with_fullref localhost/tomcat-rhel:latest localhost_tomcat-rhel.oci.tar
+	save_local_with_fullref localhost/postgres-gpg:15.4 localhost_postgres-gpg_15.4.oci.tar
+
+	echo "Writing checksums"
+	(cd "$BDIR" && rm -f checksums.sha256 && sha256sum images/*.oci.tar >checksums.sha256)
+fi
+
+# —————————————————————————————————————————————————————————————
+# Ensure we have up-to-date compose files
+# —————————————————————————————————————————————————————————————
+
+echo "Refreshing generated compose files from templates while preserving client-specific values..."
+refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"
+
+# —————————————————————————————————————————————————————————————
+# Setup Jeff if desired
+# —————————————————————————————————————————————————————————————
+OVERRIDE_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
+JEFF_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
+
+USING_JEFF="$(prompt_yn "Are you using Jeff?")"
+
+if [[ $USING_JEFF == "y" ]]; then
+	JEFF_ENABLED="y"
+	JEFF_NEWLY_ENABLED="n"
+
+	if [[ ! -f $JEFF_FILE ]]; then
+		echo "ERROR: Jeff is marked as enabled but Jeff compose file is missing: $JEFF_FILE" >&2
+		exit 1
+	fi
+else
+	ENABLE_JEFF_NOW="$(prompt_yn "Do you want to set up Jeff now?")"
+	if [[ $ENABLE_JEFF_NOW == "y" ]]; then
+		JEFF_ENABLED="y"
+		JEFF_NEWLY_ENABLED="y"
+	else
+		JEFF_ENABLED="n"
+		JEFF_NEWLY_ENABLED="n"
+	fi
+fi
+
+export JEFF_ENABLED
+
+if [[ $JEFF_NEWLY_ENABLED == "y" ]]; then
+	echo "Setting up Jeff for this existing installation..."
+
+	prompt_jeff_config
+	enable_jeff_override_env "$OVERRIDE_FILE"
+	configure_jeff_file "$JEFF_FILE"
+
+	case "$CONTAINER_ENGINE" in
+		docker)
+			UNIT_PATH="/etc/systemd/system/iriusrisk-docker.service"
+			SYSTEMCTL_CMD="sudo systemctl"
+			SED_CMD="sudo sed"
+			;;
+		podman)
+			UNIT_PATH="$HOME/.config/systemd/user/iriusrisk-podman.service"
+			SYSTEMCTL_CMD="systemctl --user"
+			SED_CMD="sed"
+			;;
+		*)
+			echo "ERROR: Unsupported engine: $CONTAINER_ENGINE" >&2
+			exit 1
+			;;
+	esac
+
+	if [[ ! -f $UNIT_PATH ]]; then
+		echo "ERROR: Service unit not found: $UNIT_PATH" >&2
+		exit 1
+	fi
+
+	if [[ ! -f $JEFF_FILE ]]; then
+		echo "ERROR: Jeff compose file not found: $JEFF_FILE" >&2
+		exit 1
+	fi
+
+	if grep -q -- "${CONTAINER_ENGINE}-compose.jeff.yml" "$UNIT_PATH"; then
+		echo "Jeff compose file already present in service unit."
+	else
+		$SED_CMD -i -E \
+			"s#^(ExecStart=.*)#\1 -f ${JEFF_FILE}#" \
+			"$UNIT_PATH"
+
+		$SED_CMD -i -E \
+			"s#^(ExecStop=.*)#\1 -f ${JEFF_FILE}#" \
+			"$UNIT_PATH"
+
+		$SYSTEMCTL_CMD daemon-reload
+		echo "Jeff compose file added to service unit."
+	fi
+fi
 
 # —————————————————————————————————————————————————————————————
 # Discover highest tomcat tag (Hub API v2, private repo) & choose version
@@ -223,70 +402,6 @@ fi
 # Build compose override (now that SAML decision is made)
 # —————————————————————————————————————————————————————————————
 COMPOSE_OVERRIDE=$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")
-
-# —————————————————————————————————————————————————————————————
-# 6. Backup DB
-# —————————————————————————————————————————————————————————————
-backup_db
-
-# —————————————————————————————————————————————————————————————
-# Backup original compose files + certificates + SAML files (if any)
-# —————————————————————————————————————————————————————————————
-# Assumes: COMPOSE_DIR, BDIR, VERSION, TS set
-TMP_COMPOSE_TAR="/tmp/irius.compose.$TS.tar.gz"
-OUT_COMPOSE_TAR="$BDIR/irius.compose.$VERSION.tar.gz"
-
-echo "Backing up contents of: $COMPOSE_DIR"
-
-if [[ ! -d $COMPOSE_DIR ]]; then
-	echo "ERROR: COMPOSE_DIR does not exist: $COMPOSE_DIR"
-	exit 1
-fi
-
-# Create tar.gz, excluding the postgres directory if it exists
-tar -C "$COMPOSE_DIR" --exclude='./postgres' -czf "$TMP_COMPOSE_TAR" .
-
-# Replace any previous archives for this run
-rm -f "$BDIR"/irius.compose.*.tar.gz || true
-mv -f "$TMP_COMPOSE_TAR" "$OUT_COMPOSE_TAR"
-
-C_TAR_SIZE="$(du -h "$OUT_COMPOSE_TAR" | cut -f1)"
-echo "Compose dir backed up: $C_TAR_SIZE -> $OUT_COMPOSE_TAR"
-
-# —————————————————————————————————————————————————————————————
-# Backup original container images (offline mode only)
-# —————————————————————————————————————————————————————————————
-
-if [ "$OFFLINE" -eq 1 ]; then
-	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:startleft \
-		docker.io_continuumsecurity_iriusrisk-prod_startleft.oci.tar
-
-	copy_with_fullref docker.io/continuumsecurity/iriusrisk-prod:reporting-module \
-		docker.io_continuumsecurity_iriusrisk-prod_reporting-module.oci.tar
-
-	# Ensure your local custom images exist
-	# nginx:
-	podman image exists localhost/nginx-rhel:latest || die "Missing image: localhost/nginx-rhel:latest"
-	# tomcat: ensure we have :latest (retag if only versioned exists)
-	if ! podman image exists localhost/tomcat-rhel:latest; then
-		if podman image exists "localhost/tomcat-rhel:tomcat-$TOMCAT_V"; then
-			echo "Retagging localhost/tomcat-rhel:tomcat-$TOMCAT_V -> localhost/tomcat-rhel:latest"
-			podman tag "localhost/tomcat-rhel:tomcat-$TOMCAT_V" localhost/tomcat-rhel:latest
-		else
-			die "Missing image: localhost/tomcat-rhel:(latest or tomcat-$TOMCAT_V)"
-		fi
-	fi
-	# postgres:
-	podman image exists localhost/postgres-gpg:15.4 || die "Missing image: localhost/postgres-gpg:15.4"
-
-	# Save local custom images with embedded refs
-	save_local_with_fullref localhost/nginx-rhel:latest localhost_nginx-rhel.oci.tar
-	save_local_with_fullref localhost/tomcat-rhel:latest localhost_tomcat-rhel.oci.tar
-	save_local_with_fullref localhost/postgres-gpg:15.4 localhost_postgres-gpg_15.4.oci.tar
-
-	echo "Writing checksums"
-	(cd "$BDIR" && rm -f checksums.sha256 && sha256sum images/*.oci.tar >checksums.sha256)
-fi
 
 # —————————————————————————————————————————————————————————————
 # Migrate legacy Podman services → single user unit (pre-change)

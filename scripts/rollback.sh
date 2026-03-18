@@ -66,7 +66,7 @@ fi
 # Locate backup directory and discover available versions
 # —————————————————————————————————————————————————————————————
 BDIR="${BDIR:-/home/$USER/irius_backups}"
-OFFLINE_BUNDLE_DIR=$BDIR
+OFFLINE_BUNDLE_DIR="$BDIR"
 
 echo "Looking for backups under: $BDIR"
 [[ -d $BDIR ]] || {
@@ -88,7 +88,8 @@ mapfile -t DB_BACKUPS < <(ls -1t "$BDIR"/irius.db.*.sql.gz 2>/dev/null || true)
 
 # Extract versions and choose a default that exists for BOTH backups
 extract_version() { # e.g. /path/irius.compose.4.46.9.tar.gz -> 4.46.9
-	local n="$(basename "$1")"
+	local n
+	n="$(basename "$1")"
 	printf '%s\n' "$n" | sed -E 's/^irius\.(compose|db)\.([0-9]+(\.[0-9]+){0,2})\..*$/\2/'
 }
 
@@ -102,7 +103,7 @@ for f in "${DB_BACKUPS[@]}"; do
 	[[ -n $v ]] && HAVE_DB["$v"]=1
 done
 
-# Compute intersection, prefer newest by file mtime (driven by ls -t order from compose list, then db list)
+# Compute intersection, prefer newest by file mtime
 CANDIDATES=()
 for f in "${COMPOSE_BACKUPS[@]}"; do
 	v="$(extract_version "$f")"
@@ -110,6 +111,7 @@ for f in "${COMPOSE_BACKUPS[@]}"; do
 		CANDIDATES+=("$v")
 	fi
 done
+
 if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
 	echo "ERROR: Found compose and DB backups, but no matching versions between them."
 	echo "Compose backups:"
@@ -144,9 +146,14 @@ echo
 # —————————————————————————————————————————————————————————————
 # Compute compose context and stop the stack cleanly
 # —————————————————————————————————————————————————————————————
-COMPOSE_OVERRIDE=$(build_compose_override "$USE_INTERNAL_PG")
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
 COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
+OVERRIDE_FILE="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.override.yml"
+JEFF_FILE="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.jeff.yml"
+
+SAML_ENABLED="n"
+JEFF_ENABLED="n"
+export JEFF_ENABLED
 
 echo "Using compose dir: $COMPOSE_DIR"
 [[ -d $COMPOSE_DIR ]] || {
@@ -166,7 +173,54 @@ $COMPOSE_TOOL $COMPOSE_OVERRIDE down
 echo "Restoring compose files from $COMPOSE_TAR -> $COMPOSE_DIR"
 tar -xzf "$COMPOSE_TAR" -C "$COMPOSE_DIR"
 echo "Compose restore complete."
+
+case "$CONTAINER_ENGINE" in
+	docker)
+		UNIT_PATH="/etc/systemd/system/iriusrisk-docker.service"
+		UNIT_BACKUP="$BDIR/iriusrisk-docker.service.pre-upgrade.bak"
+		if [[ -f $UNIT_BACKUP ]]; then
+			sudo cp "$UNIT_BACKUP" "$UNIT_PATH"
+			sudo systemctl daemon-reload
+			echo "Restored service unit from backup: $UNIT_BACKUP -> $UNIT_PATH"
+		else
+			echo "WARNING: No service unit backup found at $UNIT_BACKUP; leaving current unit unchanged."
+		fi
+		;;
+	podman)
+		UNIT_PATH="$HOME/.config/systemd/user/iriusrisk-podman.service"
+		UNIT_BACKUP="$BDIR/iriusrisk-podman.service.pre-upgrade.bak"
+		if [[ -f $UNIT_BACKUP ]]; then
+			cp "$UNIT_BACKUP" "$UNIT_PATH"
+			systemctl --user daemon-reload
+			echo "Restored service unit from backup: $UNIT_BACKUP -> $UNIT_PATH"
+		else
+			echo "WARNING: No service unit backup found at $UNIT_BACKUP; leaving current unit unchanged."
+		fi
+		;;
+	*)
+		echo "ERROR: Unsupported engine: $CONTAINER_ENGINE" >&2
+		exit 1
+		;;
+esac
 echo
+
+# Recompute restored feature flags from restored files
+if saml_files_exist; then
+	SAML_ENABLED="y"
+fi
+
+if [[ -f $JEFF_FILE ]] && [[ -f $OVERRIDE_FILE ]]; then
+	if grep -q '^[[:space:]]*-[[:space:]]*IRIUS_AI_URL=http://jeff:8008' "$OVERRIDE_FILE"; then
+		JEFF_ENABLED="y"
+	else
+		JEFF_ENABLED="n"
+	fi
+else
+	JEFF_ENABLED="n"
+fi
+export JEFF_ENABLED
+
+COMPOSE_OVERRIDE="$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")"
 
 # —————————————————————————————————————————————————————————————
 # Ensure DB service available for restore
@@ -219,7 +273,6 @@ echo
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	# Try to derive version from the chosen backup filenames
-	# First look at compose tar name, then DB dump name
 	NAME_VER=""
 	for candidate in "$COMPOSE_TAR" "$DB_DUMP"; do
 		b="$(basename "$candidate")"
@@ -229,13 +282,12 @@ if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 		fi
 	done
 
-	# Prefer existing CHOSEN_VERSION (if set earlier), else pick from filename, else prompt
+	# Prefer existing CHOSEN_VERSION, else pick from filename, else prompt
 	if [[ -z ${CHOSEN_VERSION:-} ]]; then
 		CHOSEN_VERSION="$NAME_VER"
 	fi
 
 	if [[ -z $CHOSEN_VERSION ]]; then
-		# No version embedded in filenames; ask the user
 		read -r -p "Version to rebuild custom Podman images (e.g., 4 or 4.46.9): " CHOSEN_VERSION
 		if [[ -z $CHOSEN_VERSION ]]; then
 			echo "ERROR: A version is required to rebuild custom images for Podman." >&2

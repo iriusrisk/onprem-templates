@@ -2327,7 +2327,7 @@ function save_local_with_fullref() {
 # Jeff functions
 # —————————————————————————————————————————————————————————————
 
-check_gemini_api() {
+function check_gemini_api() {
 	local endpoint="$1"
 	local api_key="$2"
 	local tmp_out status
@@ -2361,7 +2361,7 @@ check_gemini_api() {
 	rm -f "$tmp_out"
 }
 
-check_azure_endpoint() {
+function check_azure_endpoint() {
 	local endpoint="$1"
 	local api_key="$2"
 	local tmp_out status
@@ -2391,4 +2391,119 @@ check_azure_endpoint() {
 	esac
 
 	rm -f "$tmp_out"
+}
+
+function prompt_jeff_config() {
+	if [[ ${JEFF_ENABLED:-n} != "y" ]]; then
+		return 0
+	fi
+
+	AZURE_ENDPOINT=$(prompt_nonempty "Enter the Azure endpoint for Jeff AI assistant")
+	AZURE_API_KEY=$(prompt_nonempty "Enter the Azure API key for Jeff AI assistant")
+	GEMINI_ENDPOINT=$(prompt_nonempty "Enter the Gemini endpoint for Jeff AI assistant")
+	GEMINI_API_KEY=$(prompt_nonempty "Enter the Gemini API key for Jeff AI assistant")
+
+	export AZURE_ENDPOINT AZURE_API_KEY GEMINI_ENDPOINT GEMINI_API_KEY
+}
+
+function update_base_override_env() {
+	local override_file="$1"
+	local host_name="$2"
+	local irius_ext_url="$3"
+	local jdbc_url="$4"
+
+	if [[ ! -f $override_file ]]; then
+		echo "ERROR: $override_file not found. Please ensure you have cloned the repo and have the override template."
+		exit 1
+	fi
+
+	sed -i "s|NG_SERVER_NAME=.*|NG_SERVER_NAME=$host_name|g" "$override_file"
+	sed -i "s|IRIUS_EXT_URL=.*|IRIUS_EXT_URL=$irius_ext_url|g" "$override_file"
+
+	# remove any existing DB URL line before re-inserting
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_DB_URL=/d' "$override_file"
+
+	awk -v db_url="      - IRIUS_DB_URL=$jdbc_url" '
+	  BEGIN {tomcat=0}
+	  /tomcat:/ {print; tomcat=1; next}
+	  tomcat && /environment:/ {
+	      print
+	      print db_url
+	      tomcat=0
+	      next
+	  }
+	  {print}
+	' "$override_file" >"${override_file}.tmp" && mv "${override_file}.tmp" "$override_file"
+
+	echo "Updated base settings in $override_file"
+}
+
+function enable_jeff_override_env() {
+	local override_file="$1"
+
+	if [[ ! -f $override_file ]]; then
+		echo "ERROR: $override_file not found. Please ensure you have cloned the repo and have the override template."
+		exit 1
+	fi
+
+	# remove existing Jeff lines first
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_AI_URL=/d' "$override_file"
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_AI_ASH_URL=/d' "$override_file"
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_AI_HAVEN_URL=/d' "$override_file"
+
+	awk '
+	  BEGIN {tomcat=0}
+	  /tomcat:/ {print; tomcat=1; next}
+	  tomcat && /environment:/ {
+	      print
+	      print "      - IRIUS_AI_URL=http://jeff:8008"
+	      print "      - IRIUS_AI_ASH_URL=http://ash:8009"
+	      print "      - IRIUS_AI_HAVEN_URL=http://haven:8012"
+	      tomcat=0
+	      next
+	  }
+	  {print}
+	' "$override_file" >"${override_file}.tmp" && mv "${override_file}.tmp" "$override_file"
+
+	echo "Enabled Jeff settings in $override_file"
+}
+
+function configure_jeff_file() {
+	local jeff_file="$1"
+
+	if [[ ! -f $jeff_file ]]; then
+		echo "ERROR: $jeff_file not found. Please ensure you have cloned the repo and have the Jeff template."
+		exit 1
+	fi
+
+	echo "Generating random Redis password for Jeff setup."
+	REDIS_PASSWORD="$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)"
+	export REDIS_PASSWORD
+
+	echo "Updating $jeff_file"
+
+	sed -i "s|AZURE_ENDPOINT=.*|AZURE_ENDPOINT=$AZURE_ENDPOINT|g" "$jeff_file"
+	sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$AZURE_ENDPOINT|g" "$jeff_file"
+	sed -i "s|GEMINI_API_BASE=.*|GEMINI_API_BASE=$GEMINI_ENDPOINT|g" "$jeff_file"
+
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
+		sed -i "s|AZURE_API_KEY=.*|AZURE_API_KEY=$AZURE_API_KEY|g" "$jeff_file"
+		sed -i "s|AZURE_OPENAI_API_KEY=.*|AZURE_OPENAI_API_KEY=$AZURE_API_KEY|g" "$jeff_file"
+		sed -i "s|GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|g" "$jeff_file"
+
+		escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\]/\\&/g')
+		sed -i "s|\"\${REDIS_PASSWORD}\"|\"$escaped_redis_password\"|g" "$jeff_file"
+		sed -i "s|\${REDIS_PASSWORD}|$escaped_redis_password|g" "$jeff_file"
+	else
+		sed -i '/AZURE_API_KEY=/d' "$jeff_file"
+		sed -i '/AZURE_OPENAI_API_KEY=/d' "$jeff_file"
+		sed -i '/GEMINI_API_KEY=/d' "$jeff_file"
+		sed -i '/REDIS_PASSWORD=/d' "$jeff_file"
+
+		encrypt_and_store_secret "$AZURE_API_KEY" "azure_api_key" "azure_api_privkey"
+		encrypt_and_store_secret "$GEMINI_API_KEY" "gemini_api_key" "gemini_api_privkey"
+		encrypt_and_store_secret "$REDIS_PASSWORD" "redis_password" "redis_privkey"
+	fi
+
+	echo "Updated $jeff_file"
 }

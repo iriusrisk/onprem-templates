@@ -56,11 +56,14 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# Set engine and Postgres options
+# Set engine and Postgres options, update templates
 # —————————————————————————————————————————————————————————————
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
 prompt_postgres_option upgrade
+
+echo "Refreshing generated compose files from templates while preserving client-specific values..."
+refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"
 
 if [[ $POSTGRES_SETUP_OPTION == "1" ]]; then
 	USE_INTERNAL_PG="y"

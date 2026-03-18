@@ -1736,6 +1736,256 @@ function migrate_existing_podman_secrets_if_needed() {
 	migrate_podman_secret_to_armored_if_needed "redis_password" "redis_privkey"
 }
 
+# ----------------------------
+# Template refresh helpers
+# ----------------------------
+
+declare -A PRESERVED_VALUES=()
+
+function extract_env_value() {
+	local key="$1"
+	local file="$2"
+
+	[[ -f $file ]] || return 1
+
+	awk -v key="$key" '
+		$0 ~ "^[[:space:]]*-[[:space:]]*" key "=" {
+			sub("^[[:space:]]*-[[:space:]]*" key "=", "", $0)
+			print $0
+			exit
+		}
+	' "$file"
+}
+
+function extract_host_name() {
+	local file="$1"
+	local val=""
+
+	[[ -f $file ]] || return 1
+
+	# Prefer NG_SERVER_NAME
+	val="$(extract_env_value "NG_SERVER_NAME" "$file" || true)"
+	if [[ -n $val ]]; then
+		printf '%s' "$(trim "$val")"
+		return 0
+	fi
+
+	# Fallback: derive from IRIUS_EXT_URL=https://host
+	val="$(extract_env_value "IRIUS_EXT_URL" "$file" || true)"
+	if [[ $val =~ ^https://(.+)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+
+	return 1
+}
+
+function extract_postgres_ip() {
+	local file="$1"
+	local db_url=""
+
+	[[ -f $file ]] || return 1
+
+	db_url="$(extract_env_value "IRIUS_DB_URL" "$file" || true)"
+	[[ -n $db_url ]] || return 1
+
+	# docker:
+	# jdbc:postgresql://10.0.0.5:5432/iriusprod?user=iriusprod&password=secret
+	# podman:
+	# jdbc:postgresql://10.0.0.5:5432/iriusprod?user=iriusprod
+	if [[ $db_url =~ ^jdbc:postgresql://([^:/?]+):5432/iriusprod ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+
+	return 1
+}
+
+function extract_postgres_password() {
+	local override_file="$1"
+	local postgres_file="$2"
+	local db_url=""
+	local val=""
+
+	# First try the tomcat DB URL
+	if [[ -f $override_file ]]; then
+		db_url="$(extract_env_value "IRIUS_DB_URL" "$override_file" || true)"
+		if [[ $db_url =~ [\?\&]password=([^&]+)$ ]]; then
+			printf '%s' "${BASH_REMATCH[1]}"
+			return 0
+		fi
+	fi
+
+	# Fallback: internal postgres compose file
+	if [[ -f $postgres_file ]]; then
+		val="$(awk '
+			$0 ~ "^[[:space:]]*POSTGRES_PASSWORD:[[:space:]]*" {
+				sub("^[[:space:]]*POSTGRES_PASSWORD:[[:space:]]*", "", $0)
+				print $0
+				exit
+			}
+		' "$postgres_file")"
+		if [[ -n $val ]]; then
+			printf '%s' "$(trim "$val")"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+function discover_placeholders() {
+	local file="$1"
+	[[ -f $file ]] || return 0
+	grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$file" 2>/dev/null | sed -E 's/^\$\{|\}$//g' | sort -u || true
+}
+
+function capture_preserved_values() {
+	local compose_file="$1"
+	local override_file="$2"
+	local jeff_file="$3"
+	local postgres_file="$4"
+	local override_template="$5"
+	local jeff_template="$6"
+	local postgres_template="$7"
+
+	local all_placeholders=()
+	local p
+
+	mapfile -t all_placeholders < <(
+		{
+			discover_placeholders "$override_template"
+			discover_placeholders "$jeff_template"
+			discover_placeholders "$postgres_template"
+		} | sort -u
+	)
+
+	echo "Preserving client-specific values from current compose files..."
+
+	for p in "${all_placeholders[@]}"; do
+		case "$p" in
+			HOST_NAME)
+				PRESERVED_VALUES["$p"]="$(extract_host_name "$override_file" || true)"
+				;;
+			POSTGRES_IP)
+				PRESERVED_VALUES["$p"]="$(extract_postgres_ip "$override_file" || true)"
+				;;
+			POSTGRES_PASSWORD)
+				PRESERVED_VALUES["$p"]="$(extract_postgres_password "$override_file" "$postgres_file" || true)"
+				;;
+			*)
+				# Generic fallback: try to find KEY=value in existing files
+				PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$override_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$compose_file" || true)"
+
+				if [[ -z ${PRESERVED_VALUES[$p]} ]]; then
+					echo "WARNING: No value found for placeholder: $p"
+				fi
+				;;
+		esac
+	done
+
+	echo "Captured values:"
+	for p in "${!PRESERVED_VALUES[@]}"; do
+		if [[ -n ${PRESERVED_VALUES[$p]} ]]; then
+			echo "  - $p=[set]"
+		else
+			echo "  - $p=[empty/not found]"
+		fi
+	done
+}
+
+function copy_templates_to_final_locations() {
+	local override_template="$1"
+	local override_file="$2"
+	local jeff_template="$3"
+	local jeff_file="$4"
+	local compose_template="$5"
+	local compose_file="$6"
+	local postgres_template="$7"
+	local postgres_file="$8"
+
+	mkdir -p "$(dirname "$override_file")"
+
+	cp "$override_template" "$override_file"
+	cp "$jeff_template" "$jeff_file"
+	cp "$compose_template" "$compose_file"
+
+	if [[ -f $postgres_template ]]; then
+		cp "$postgres_template" "$postgres_file"
+	fi
+
+	echo "Copied fresh templates into place."
+}
+
+function replace_placeholder_in_file() {
+	local file="$1"
+	local var_name="$2"
+	local var_value="$3"
+
+	[[ -f $file ]] || return 0
+
+	VAR_NAME="$var_name" VAR_VALUE="$var_value" perl -0pi -e '
+		s/\$\{\Q$ENV{VAR_NAME}\E\}/$ENV{VAR_VALUE}/g
+	' "$file"
+}
+
+function restore_preserved_values() {
+	local override_file="$1"
+	local jeff_file="$2"
+	local postgres_file="$3"
+
+	local p
+	for p in "${!PRESERVED_VALUES[@]}"; do
+		[[ -n ${PRESERVED_VALUES[$p]} ]] || continue
+
+		replace_placeholder_in_file "$override_file" "$p" "${PRESERVED_VALUES[$p]}"
+		replace_placeholder_in_file "$jeff_file" "$p" "${PRESERVED_VALUES[$p]}"
+		replace_placeholder_in_file "$postgres_file" "$p" "${PRESERVED_VALUES[$p]}"
+	done
+
+	echo "Re-applied preserved client values to refreshed compose files."
+}
+
+function refresh_generated_compose_files_from_templates() {
+	local compose_dir="$1"
+	local engine="$2"
+
+	local override_template="../templates/$engine/$engine-compose.override.tpl"
+	local override_file="../$engine/$engine-compose.override.yml"
+	local jeff_template="../templates/$engine/$engine-compose.jeff.tpl"
+	local jeff_file="../$engine/$engine-compose.jeff.yml"
+	local compose_template="../templates/$engine/$engine-compose.tpl"
+	local compose_file="../$engine/$engine-compose.yml"
+	local postgres_template="../templates/$engine/$engine-compose.postgres.tpl"
+	local postgres_file="../$engine/$engine-compose.postgres.yml"
+
+	capture_preserved_values \
+		"$compose_file" \
+		"$override_file" \
+		"$jeff_file" \
+		"$postgres_file" \
+		"$override_template" \
+		"$jeff_template" \
+		"$postgres_template"
+
+	copy_templates_to_final_locations \
+		"$override_template" \
+		"$override_file" \
+		"$jeff_template" \
+		"$jeff_file" \
+		"$compose_template" \
+		"$compose_file" \
+		"$postgres_template" \
+		"$postgres_file"
+
+	restore_preserved_values \
+		"$override_file" \
+		"$jeff_file" \
+		"$postgres_file"
+}
+
 # —————————————————————————————————————————————————————————————
 # Legacy Podman service cleanup + single-unit generation helpers
 # —————————————————————————————————————————————————————————————

@@ -57,6 +57,41 @@ echo
 prompt_engine
 
 # —————————————————————————————————————————————————————————————
+# Copy templates ready for customisation
+# —————————————————————————————————————————————————————————————
+OVERRIDE_TEMPLATE="../templates/$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.tpl"
+OVERRIDE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
+JEFF_TEMPLATE="../templates/$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.tpl"
+JEFF_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
+COMPOSE_TEMPLATE="../templates/$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.tpl"
+COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+POSTGRES_TEMPLATE="../templates/$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.tpl"
+POSTGRES_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.yml"
+
+FILES=(
+	"$OVERRIDE_TEMPLATE:$OVERRIDE_FILE"
+	"$JEFF_TEMPLATE:$JEFF_FILE"
+	"$COMPOSE_TEMPLATE:$COMPOSE_FILE"
+	"$POSTGRES_TEMPLATE:$POSTGRES_FILE"
+)
+
+for PAIR in "${FILES[@]}"; do
+	SRC="${PAIR%%:*}"
+	DST="${PAIR##*:}"
+
+	if [[ ! -f $SRC ]]; then
+		echo "ERROR: Template not found: $SRC" >&2
+		exit 1
+	fi
+
+	mkdir -p "$(dirname "$DST")"
+	cp "$SRC" "$DST"
+	echo "Copied $SRC -> $DST"
+done
+
+echo "All templates copied successfully."
+
+# —————————————————————————————————————————————————————————————
 # Run preflight and capture output
 # —————————————————————————————————————————————————————————————
 bash "$SCRIPT_PATH/preflight.sh" >preflight_output.txt 2>&1 || true

@@ -40,7 +40,7 @@ services:
   ash:
     environment:
       - CORS_ORIGINS=http://localhost:5173, http://localhost:8003
-      - GEMINI_API_KEY={GEMINI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
       - RAG_HOST=http://rag:8010
       - GEMINI_API_BASE=${GEMINI_ENDPOINT}

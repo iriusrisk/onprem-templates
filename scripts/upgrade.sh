@@ -298,8 +298,10 @@ if [ "$OFFLINE" -eq 0 ]; then
 		TAGS_URL_BASE="https://hub.docker.com/v2/repositories/${REPO_NS}/tags"
 		echo "Discovering tomcat tags on Docker Hub for ${REPO_NS} ..."
 
+		# Ensure we have a password; helper will prompt if needed
 		[[ -z ${REGISTRY_PASS:-} ]] && prompt_registry_password
 
+		# Obtain Hub JWT (separate from docker login credential store)
 		HUB_TOKEN="$(
 			curl -fsSL -H 'Content-Type: application/json' \
 				-d "{\"username\":\"${REGISTRY_USERNAME:-iriusrisk}\",\"password\":\"${REGISTRY_PASS}\"}" \
@@ -310,6 +312,7 @@ if [ "$OFFLINE" -eq 0 ]; then
 			echo "WARNING: Hub login failed; you can still type the version manually."
 		fi
 
+		# Gather tomcat-* tags from Hub API (paginate via .next)
 		versions=()
 		if [[ -n $HUB_TOKEN ]]; then
 			url="${TAGS_URL_BASE}?page_size=100&name=tomcat"
@@ -336,6 +339,7 @@ if [ "$OFFLINE" -eq 0 ]; then
 			done
 		fi
 
+		# Choose default: prefer full semver X.Y.Z; else highest major
 		DEFAULT_VERSION=""
 		if [[ ${#versions[@]} -gt 0 ]]; then
 			full=() majors=()
@@ -437,14 +441,13 @@ fi
 # Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
-	# Update ONLY Tomcat line (matches major-only or full semver; docker.io prefix optional)
-	if grep -qE '^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:tomcat-[0-9.]+([[:space:]]|$)' "$COMPOSE_YML"; then
+	if grep -qE '^[[:space:]]*image:[[:space:]]*\$\{REGISTRY_URL:-docker\.io\}/\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-[0-9.]+' "$COMPOSE_YML"; then
 		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
+			"s@(^[[:space:]]*image:[[:space:]]*\\\$\{REGISTRY_URL:-docker\.io\}/\\\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
 			"$COMPOSE_YML"
-		echo "Updated tomcat image tag → docker.io/continuumsecurity/iriusrisk-prod:tomcat-${CHOSEN_VERSION}"
+		echo "Updated tomcat image tag → \${REGISTRY_URL:-docker.io}/\${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:tomcat-${CHOSEN_VERSION}"
 	else
-		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
+		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected variable-based ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
 		exit 5
 	fi
 else
@@ -488,6 +491,10 @@ if [[ $CONTAINER_ENGINE == "docker" ]]; then
 	container_registry_login
 fi
 
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	ensure_podman_network_kernel_modules
+fi
+
 $CONTAINER_ENGINE system prune -f
 cd "$COMPOSE_DIR"
 
@@ -502,6 +509,10 @@ else
 fi
 
 echo "Restarting stack to complete upgrade"
+
+if [[ $CONTAINER_ENGINE == "podman" ]]; then
+	ensure_podman_network_kernel_modules
+fi
 
 # Spin up IriusRisk stack
 $COMPOSE_TOOL $COMPOSE_OVERRIDE up -d

@@ -1421,9 +1421,7 @@ function detect_engine_ctx() {
 
 	local extra_registry_env=""
 	if [[ ${REGISTRY_URL:-docker.io} != "docker.io" || ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} != "continuumsecurity/iriusrisk-prod" ]]; then
-		extra_registry_env=$'
-Environment=REGISTRY_URL='"${REGISTRY_URL}"$'
-Environment=REGISTRY_NAMESPACE='"${REGISTRY_NAMESPACE}"
+		extra_registry_env=$'\nEnvironment=REGISTRY_URL='"${REGISTRY_URL}"$'\nEnvironment=REGISTRY_NAMESPACE='"${REGISTRY_NAMESPACE}"
 	fi
 
 	case "$ENGINE" in
@@ -1435,8 +1433,7 @@ Environment=REGISTRY_NAMESPACE='"${REGISTRY_NAMESPACE}"
 			SYSTEMCTL="sudo systemctl"
 			UNIT_AFTER=$'After=network.target docker.service'
 			UNIT_REQUIRES=$'Requires=docker.service'
-			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker
-Environment=COMPOSE_INTERACTIVE_NO_CLI=1'"${extra_registry_env}"
+			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'"${extra_registry_env}"
 			NEED_DOCKER_CFG="true"
 			;;
 		podman)
@@ -2461,8 +2458,79 @@ function offline_load_images() {
 		fi
 	done
 
+	# Retag bundle-loaded images to the registry/namespace selected for this deployment.
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"nginx-rhel" \
+		"$(image_ref "nginx")"
+
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"tomcat-rhel" \
+		"$(image_ref "tomcat-$(tr -d '[:space:]' <"${OFFLINE_BUNDLE_DIR}/iriusrisk_version")")"
+
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"startleft" \
+		"$(image_ref "startleft")"
+
+	retag_offline_component_from_bundle_if_needed \
+		"$img_dir" \
+		"reporting-module" \
+		"$(image_ref "reporting-module")"
+
 	echo "[offline] Done. Current images:"
 	podman images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Created}}\t{{.Size}}"
+}
+
+function retag_offline_component_from_bundle_if_needed() {
+	local img_dir="$1"
+	local component="$2"
+	local target_ref="$3"
+
+	local tarball=""
+	local base=""
+	local source_ref=""
+
+	tarball="$(find "$img_dir" -maxdepth 1 -type f -name "*${component}.oci.tar" | head -n1)"
+	[[ -z $tarball ]] && {
+		echo "[offline] WARNING: no archive found for component '$component'"
+		return 0
+	}
+
+	base="$(basename "$tarball" .oci.tar)"
+
+	if [[ $base == localhost_* ]]; then
+		if [[ $base == localhost_nginx-rhel ]]; then
+			source_ref="localhost/nginx-rhel:latest"
+		elif [[ $base == localhost_tomcat-rhel ]]; then
+			source_ref="localhost/tomcat-rhel:latest"
+		elif [[ $base == localhost_postgres-gpg_15.4 ]]; then
+			source_ref="localhost/postgres-gpg:15.4"
+		else
+			echo "[offline] WARNING: unsupported localhost archive name: $(basename "$tarball")"
+			return 0
+		fi
+	else
+		source_ref="$(_ref_from_filename "$base")"
+	fi
+
+	if [[ -z $source_ref ]]; then
+		echo "[offline] WARNING: could not derive source ref for '$component' from $(basename "$tarball")"
+		return 0
+	fi
+
+	if [[ $source_ref == "$target_ref" ]]; then
+		echo "[offline] No retag needed for $component ($source_ref)"
+		return 0
+	fi
+
+	if podman image exists "$source_ref"; then
+		echo "[offline] Retagging $source_ref -> $target_ref"
+		podman tag "$source_ref" "$target_ref"
+	else
+		echo "[offline] WARNING: source image not found after load: $source_ref"
+	fi
 }
 
 function ensure_subids_for_user() {

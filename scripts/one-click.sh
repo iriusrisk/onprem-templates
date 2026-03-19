@@ -35,6 +35,8 @@ set -- "${ARGS[@]:-}"
 
 export OFFLINE OFFLINE_BUNDLE_DIR
 
+prompt_registry_settings
+
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————

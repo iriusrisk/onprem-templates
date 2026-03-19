@@ -49,7 +49,7 @@ services:
   startleft:
     environment:
       - IRIUS_SERVER=http://tomcat:8080
-    image: docker.io/continuumsecurity/iriusrisk-prod:startleft
+    image: ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:startleft
     container_name: iriusrisk-startleft
     command: ["uvicorn", "startleft.startleft.api.fastapi_server:webapp", "--host", "0.0.0.0", "--port", "8081"]
     networks:
@@ -58,7 +58,7 @@ services:
     mem_limit: 2G
 
   reporting-module:
-    image: docker.io/continuumsecurity/iriusrisk-prod:reporting-module
+    image: ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:reporting-module
     container_name: reporting-module
     networks:
       - iriusrisk-backend

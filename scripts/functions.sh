@@ -2143,6 +2143,28 @@ function restore_preserved_values() {
 	echo "Re-applied preserved client values to refreshed compose files."
 }
 
+function extract_service_image() {
+	local service="$1"
+	local file="$2"
+
+	[[ -f $file ]] || return 1
+
+	awk -v svc="$service" '
+		$0 ~ "^[[:space:]]{2}" svc ":[[:space:]]*$" {
+			in_service=1
+			next
+		}
+		in_service && /^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*$/ {
+			in_service=0
+		}
+		in_service && /^[[:space:]]{4}image:[[:space:]]*/ {
+			sub(/^[[:space:]]{4}image:[[:space:]]*/, "", $0)
+			print
+			exit
+		}
+	' "$file"
+}
+
 function extract_image_value_for_placeholder() {
 	local placeholder="$1"
 	local file="$2"
@@ -2150,101 +2172,17 @@ function extract_image_value_for_placeholder() {
 	[[ -f $file ]] || return 1
 
 	case "$placeholder" in
-		NGINX_IMAGE)
-			awk '/^[[:space:]]*nginx:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		TOMCAT_IMAGE)
-			awk '/^[[:space:]]*tomcat:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		STARTLEFT_IMAGE)
-			awk '
-				/^[[:space:]]{2}startleft:[[:space:]]*$/ {in_service=1; next}
-				in_service && /^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-				in_service && /^[[:space:]]{4}image:[[:space:]]*/ {
-					sub(/^[[:space:]]{4}image:[[:space:]]*/, "", $0)
-					print
-					exit
-				}
-			' "$file"
-			;;
-		REPORTING_MODULE_IMAGE)
-			awk '/^[[:space:]]*reporting-module:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		JEFF_IMAGE)
-			awk '/^[[:space:]]*jeff:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		RAG_IMAGE)
-			awk '/^[[:space:]]*rag:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		ASH_IMAGE)
-			awk '/^[[:space:]]*ash:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		HAVEN_IMAGE)
-			awk '/^[[:space:]]*haven:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		REDIS_IMAGE)
-			awk '/^[[:space:]]*redis:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		POSTGRES_IMAGE)
-			awk '/^[[:space:]]*postgres:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
-			;;
-		*)
-			return 1
-			;;
+		NGINX_IMAGE) extract_service_image "nginx" "$file" ;;
+		TOMCAT_IMAGE) extract_service_image "tomcat" "$file" ;;
+		STARTLEFT_IMAGE) extract_service_image "startleft" "$file" ;;
+		REPORTING_MODULE_IMAGE) extract_service_image "reporting-module" "$file" ;;
+		JEFF_IMAGE) extract_service_image "jeff" "$file" ;;
+		RAG_IMAGE) extract_service_image "rag" "$file" ;;
+		ASH_IMAGE) extract_service_image "ash" "$file" ;;
+		HAVEN_IMAGE) extract_service_image "haven" "$file" ;;
+		REDIS_IMAGE) extract_service_image "redis" "$file" ;;
+		POSTGRES_IMAGE) extract_service_image "postgres" "$file" ;;
+		*) return 1 ;;
 	esac
 }
 

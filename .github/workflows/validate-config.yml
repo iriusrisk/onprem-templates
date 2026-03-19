@@ -45,12 +45,7 @@ jobs:
           ASH_IMAGE: dummy/ash
           HAVEN_IMAGE: dummy/haven
           REDIS_IMAGE: dummy/redis
-        run: docker-compose \
-          -f templates/docker/docker-compose.tpl \
-          -f templates/docker/docker-compose.override.tpl \
-          -f templates/docker/docker-compose.postgres.tpl \
-          -f templates/docker/docker-compose.jeff.tpl \
-          config
+        run: docker-compose -f templates/docker/docker-compose.tpl -f templates/docker/docker-compose.override.tpl -f templates/docker/docker-compose.postgres.tpl -f templates/docker/docker-compose.jeff.tpl config
 
       - name: Validate Podman config
         env:

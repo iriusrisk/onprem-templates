@@ -54,7 +54,7 @@ services:
       - CORS_ORIGINS=http://localhost:5173, http://localhost:8003
       - RAG_HOST=http://rag:8010
       - GEMINI_API_BASE=${GEMINI_ENDPOINT}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_ENDPOINT}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
     ports:
       - 8009:8009
     image: localhost/ai-ash-1.7.0

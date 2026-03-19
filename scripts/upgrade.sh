@@ -224,6 +224,11 @@ export JEFF_ENABLED
 echo "Refreshing generated compose files from templates while preserving client-specific values..."
 refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"
 
+POSTGRES_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.yml"
+COMPOSE_YML="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+
+update_compose_image_placeholders "$COMPOSE_YML" "$JEFF_FILE" "$POSTGRES_FILE"
+
 # —————————————————————————————————————————————————————————————
 # Setup Jeff if enabled now but not previously (pre-upgrade)
 # —————————————————————————————————————————————————————————————

@@ -35,8 +35,6 @@ set -- "${ARGS[@]:-}"
 
 export OFFLINE OFFLINE_BUNDLE_DIR
 
-prompt_registry_settings
-
 # —————————————————————————————————————————————————————————————
 # Script Start
 # —————————————————————————————————————————————————————————————
@@ -54,9 +52,10 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# Pick your container engine
+# Pick container engine and registry
 # —————————————————————————————————————————————————————————————
 prompt_engine
+prompt_registry_settings
 
 # —————————————————————————————————————————————————————————————
 # Copy templates ready for customisation

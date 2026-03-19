@@ -288,7 +288,6 @@ fi
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
 
-	COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
 	[[ -f $COMPOSE_YML ]] || {
 		echo "ERROR: Compose file not found: $COMPOSE_YML" >&2
 		exit 4

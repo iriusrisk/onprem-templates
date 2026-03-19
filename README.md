@@ -43,15 +43,24 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 - Best for **remote installations** where nothing is pre-installed.
 
 ### `one-click.sh`
-- The main **end-to-end installer**.
-- Ensures you’re in the right directory, detects the Linux distribution, selects the appropriate container engine automatically, sets up PostgreSQL (internal container or external DB), and then deploys IriusRisk.
-- Calls other helper scripts (`preflight.sh`, `setup-wizard.sh`) as needed.
-- Recommended if you’ve already cloned the repo and are inside the `scripts/` directory.
+
+-   The main **end-to-end installer**.
+-   Ensures you're in the right directory, detects the Linux
+    distribution, selects the appropriate container engine
+    automatically, sets up PostgreSQL (internal container or external
+    DB), and then deploys IriusRisk.
+-   Calls other helper scripts (`preflight.sh`, `setup-wizard.sh`) as
+    needed.
+-   **Optionally installs Jeff (AI assistant)** during setup via an
+    interactive prompt.
+-   Recommended if you've already cloned the repo and are inside the
+    `scripts/` directory.
 
 ### `setup-wizard.sh`
 - Runs interactively and asks questions about:
   - PostgreSQL setup (internal or external)
   - Hostname and external URLs
+  - Azure and Gemini endpoints and API keys if installing Jeff
 - Updates configuration files accordingly.
 - Can be run standalone if you want to just configure and not deploy.
 
@@ -84,7 +93,9 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 3. **Answer interactive prompts**:
    - Select container registry (default or custom)
    - Decide how to set up PostgreSQL (internal container or external DB)
+   - Choose whether to install Jeff (AI assistant)
    - Provide hostname
+   - Provide Azure and Gemini endpoints and API keys if installing Jeff
    - Confirm deployment
 
 4. **Deployment starts**:
@@ -133,11 +144,39 @@ The container engine is selected automatically based on the detected Linux distr
 
 ---
 
+## 🤖 Jeff (AI Assistant)
 
+Jeff is the IriusRisk AI assistant and can be installed either:
+
+-   During initial setup (`one-click.sh`)
+-   During an upgrade (`upgrade.sh`)
+
+### Installation (Fresh Setup)
+
+During setup, you will be prompted to enable Jeff.
+
+If enabled: 
+   - Jeff services are included in deployment 
+   - Configuration is applied automatically
+
+### Installation During Upgrade
+
+During upgrade, you can: 
+
+- Enable Jeff if not already installed
+
+If enabled: 
+
+- Compose file is created from template 
+- Systemd service is updated 
+- Stack is restarted with Jeff enabled
+
+### Notes
+
+-   Jeff is deployed as an additional compose layer
+-   Existing installations are preserved during upgrades
 
 ---
-
-
 
 ## 🧩 Managing the Stack
 
@@ -185,9 +224,11 @@ To upgrade an existing IriusRisk on-prem installation:
 
 3. **Answer interactive prompts**:
    - **"How is your PostgreSQL configured?"** (internal or external)
+   - Whether you are currently using Jeff
+   - Option to enable Jeff during upgrade (if not already enabled)
 
 4. **Upgrade process**:
-   - The script backs up your PostgreSQL database and compose files to the `irius_backups/` directory inside the current user's home folder.
+   - The script backs up your PostgreSQL database, IriusRisk service and compose files to the `irius_backups/` directory inside the current user's home folder.
    - Unused containers, networks, and images are cleaned up automatically.
    - The running containers are stopped.
    - The latest images are pulled from the repository (or rebuilt locally if using Podman).
@@ -217,6 +258,7 @@ If an upgrade fails or you need to return to a previous version, you can roll ba
 
 4. **Rollback process**:
    - The compose files are restored from the matching backup archive.
+   - The previous IriusRisk service is restored from the backup.
    - The database is restored from the matching `.sql.gz` dump.
    - If running under **Podman**, custom images are rebuilt for the chosen version (`build_podman_custom_images`).
    - The stack is restarted with the restored configuration and data.

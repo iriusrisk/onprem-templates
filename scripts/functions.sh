@@ -72,12 +72,36 @@ function prompt_postgres_option() {
 : "${REGISTRY_URL:=docker.io}"
 : "${REGISTRY_NAMESPACE:=continuumsecurity/iriusrisk-prod}"
 : "${REGISTRY_USERNAME:=iriusrisk}"
-: "${POSTGRES_BASE_IMAGE:=docker.io/library/postgres:15.4}"
-: "${REDIS_BASE_IMAGE:=docker.io/redis/redis-stack:latest}"
+: "${POSTGRES_DEFAULT_IMAGE:=docker.io/library/postgres:15.4}"
+: "${REDIS_DEFAULT_IMAGE:=docker.io/redis/redis-stack:latest}"
+: "${POSTGRES_BASE_IMAGE:=}"
+: "${REDIS_BASE_IMAGE:=}"
 
 function image_ref() {
 	local tag="$1"
 	echo "${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${tag}"
+}
+
+function postgres_image_ref() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		echo "${POSTGRES_DEFAULT_IMAGE:-docker.io/library/postgres:15.4}"
+	else
+		echo "${REGISTRY_URL}/${REGISTRY_NAMESPACE}:postgres-15.4"
+	fi
+}
+
+function redis_image_ref() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		echo "${REDIS_DEFAULT_IMAGE:-docker.io/redis/redis-stack:latest}"
+	else
+		echo "${REGISTRY_URL}/${REGISTRY_NAMESPACE}:redis-stack-latest"
+	fi
+}
+
+function refresh_base_images() {
+	POSTGRES_BASE_IMAGE="$(postgres_image_ref)"
+	REDIS_BASE_IMAGE="$(redis_image_ref)"
+	export POSTGRES_BASE_IMAGE REDIS_BASE_IMAGE
 }
 
 function prompt_registry_settings() {
@@ -113,77 +137,14 @@ function prompt_registry_settings() {
 		esac
 	done
 
-	export REGISTRY_URL REGISTRY_NAMESPACE REGISTRY_USERNAME
+	refresh_base_images
+	export REGISTRY_URL REGISTRY_NAMESPACE REGISTRY_USERNAME POSTGRES_BASE_IMAGE REDIS_BASE_IMAGE
 }
 
 function prompt_registry_password() {
 	local registry_user="${REGISTRY_USERNAME:-iriusrisk}"
 	read -srp "Enter the container registry password for user '${registry_user}': " REGISTRY_PASS
 	echo
-}
-
-function prompt_postgres_image_source() {
-	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
-		POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
-		export POSTGRES_BASE_IMAGE
-		echo "Using default PostgreSQL base image: $POSTGRES_BASE_IMAGE"
-		return 0
-	fi
-
-	echo "PostgreSQL base image source:"
-	echo "  1) Default public image (docker.io/library/postgres:15.4)"
-	echo "  2) Custom image"
-
-	while true; do
-		read -rp "Enter 1 or 2: " pg_img_option
-		case "$pg_img_option" in
-			1)
-				POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
-				break
-				;;
-			2)
-				POSTGRES_BASE_IMAGE=$(prompt_nonempty "Enter PostgreSQL base image reference")
-				break
-				;;
-			*)
-				echo "Invalid input: '$pg_img_option'. Please enter 1 or 2."
-				;;
-		esac
-	done
-
-	export POSTGRES_BASE_IMAGE
-}
-
-function prompt_redis_image_source() {
-	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
-		REDIS_BASE_IMAGE="docker.io/redis/redis-stack:latest"
-		export REDIS_BASE_IMAGE
-		echo "Using default Redis base image: $REDIS_BASE_IMAGE"
-		return 0
-	fi
-
-	echo "Redis base image source:"
-	echo "  1) Default public image (docker.io/redis/redis-stack:latest)"
-	echo "  2) Custom image"
-
-	while true; do
-		read -rp "Enter 1 or 2: " redis_img_option
-		case "$redis_img_option" in
-			1)
-				REDIS_BASE_IMAGE="docker.io/redis/redis-stack:latest"
-				break
-				;;
-			2)
-				REDIS_BASE_IMAGE=$(prompt_nonempty "Enter Redis base image reference")
-				break
-				;;
-			*)
-				echo "Invalid input: '$redis_img_option'. Please enter 1 or 2."
-				;;
-		esac
-	done
-
-	export REDIS_BASE_IMAGE
 }
 
 function prompt_for_docker_user() {
@@ -380,7 +341,7 @@ function install_and_configure_postgres() {
 		local base_image
 
 		if [[ $OFFLINE -eq 0 ]]; then
-			prompt_postgres_image_source
+			refresh_base_images
 		fi
 		base_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
 
@@ -875,6 +836,7 @@ function build_podman_custom_images() {
 	echo "Preparing custom images for version: tomcat-${tv}"
 
 	local nginx_image tomcat_image postgres_image jeff_image rag_image ash_image haven_image redis_image
+	refresh_base_images
 	nginx_image="$(image_ref "nginx")"
 	tomcat_image="$(image_ref "tomcat-${tv}")"
 	postgres_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
@@ -883,11 +845,6 @@ function build_podman_custom_images() {
 	ash_image="$(image_ref "ai-ash-1.7.0")"
 	haven_image="$(image_ref "ai-haven-1.0.1")"
 	redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
-
-	if [[ $OFFLINE -eq 0 && ${JEFF_ENABLED:-n} == "y" ]]; then
-		prompt_redis_image_source
-		redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
-	fi
 
 	podman rm -f temp-nginx temp-tomcat temp-postgres temp-jeff temp-rag temp-ash temp-haven temp-redis 2>/dev/null || true
 

@@ -2169,13 +2169,15 @@ function extract_image_value_for_placeholder() {
 			     }' "$file"
 			;;
 		STARTLEFT_IMAGE)
-			awk '/^[[:space:]]*startleft:[[:space:]]*$/ {in_service=1; next}
-			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
-			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
-			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
-			         print
-			         exit
-			     }' "$file"
+			awk '
+				/^[[:space:]]{2}startleft:[[:space:]]*$/ {in_service=1; next}
+				in_service && /^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+				in_service && /^[[:space:]]{4}image:[[:space:]]*/ {
+					sub(/^[[:space:]]{4}image:[[:space:]]*/, "", $0)
+					print
+					exit
+				}
+			' "$file"
 			;;
 		REPORTING_MODULE_IMAGE)
 			awk '/^[[:space:]]*reporting-module:[[:space:]]*$/ {in_service=1; next}

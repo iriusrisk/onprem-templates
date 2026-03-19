@@ -1855,12 +1855,18 @@ function validate_preserved_values() {
 
 	# Jeff-specific values required only when Jeff is enabled
 	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		# Needed on both engines because they remain in the compose file
 		require_preserved_value "AZURE_ENDPOINT"
-		require_preserved_value "AZURE_API_KEY"
-		require_preserved_value "AZURE_OPENAI_API_KEY"
 		require_preserved_value "AZURE_OPENAI_ENDPOINT"
 		require_preserved_value "GEMINI_ENDPOINT"
-		require_preserved_value "GEMINI_API_KEY"
+
+		# Only Docker keeps these in the Jeff compose file
+		if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
+			require_preserved_value "AZURE_API_KEY"
+			require_preserved_value "AZURE_OPENAI_API_KEY"
+			require_preserved_value "GEMINI_API_KEY"
+			require_preserved_value "REDIS_PASSWORD"
+		fi
 	fi
 }
 
@@ -2040,8 +2046,13 @@ function capture_preserved_values() {
 			GEMINI_ENDPOINT)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
 				;;
-			AZURE_ENDPOINT | AZURE_API_KEY | AZURE_OPENAI_API_KEY | AZURE_OPENAI_ENDPOINT | GEMINI_API_KEY | REDIS_PASSWORD)
+			AZURE_ENDPOINT | AZURE_OPENAI_ENDPOINT)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				;;
+			AZURE_API_KEY | AZURE_OPENAI_API_KEY | GEMINI_API_KEY | REDIS_PASSWORD)
+				if [[ ${CONTAINER_ENGINE:-} == "docker" && -n $jeff_file ]]; then
+					PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				fi
 				;;
 			NGINX_IMAGE | TOMCAT_IMAGE | STARTLEFT_IMAGE | REPORTING_MODULE_IMAGE)
 				PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$compose_file" || true)"

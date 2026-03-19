@@ -3,7 +3,7 @@ networks:
   iriusrisk-backend:
 services:
   postgres:
-    image: docker.io/library/postgres:15.4
+    image: ${POSTGRES_IMAGE}
     container_name: iriusrisk-postgres
     ports:
       - "5432:5432"

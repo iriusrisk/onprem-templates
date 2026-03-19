@@ -14,7 +14,7 @@ services:
       - BLACKLIST_ENABLED=False
     ports:
       - 8008:8008
-    image: docker.io/continuumsecurity/iriusrisk-prod:ai-jeff-4.6.2
+    image: ${JEFF_IMAGE}
     container_name: jeff
     restart: unless-stopped
     networks:
@@ -32,7 +32,7 @@ services:
       - DEBUG=False
     ports:
       - 8010:8010
-    image: docker.io/continuumsecurity/iriusrisk-prod:ai-rag-1.2.2
+    image: ${RAG_IMAGE}
     container_name: rag
     restart: unless-stopped
     networks:
@@ -47,7 +47,7 @@ services:
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
     ports:
       - 8009:8009
-    image: docker.io/continuumsecurity/iriusrisk-prod:ai-ash-1.7.0
+    image: ${ASH_IMAGE}
     container_name: ash
     restart: unless-stopped
     networks:
@@ -66,7 +66,7 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     ports:
       - 8012:8012
-    image: docker.io/continuumsecurity/iriusrisk-prod:ai-haven-1.0.1
+    image: ${HAVEN_IMAGE}
     container_name: haven
     restart: unless-stopped
     depends_on:
@@ -74,7 +74,7 @@ services:
     networks:
     - iriusrisk-backend
   redis:
-    image: redis/redis-stack:latest
+    image: ${REDIS_IMAGE}
     container_name: redis
     restart: always
     command: redis-stack-server --requirepass ${REDIS_PASSWORD}

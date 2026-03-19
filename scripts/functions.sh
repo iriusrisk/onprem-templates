@@ -2085,14 +2085,16 @@ function replace_placeholder_in_file() {
 }
 
 function restore_preserved_values() {
-	local override_file="$1"
-	local jeff_file="$2"
-	local postgres_file="$3"
+	local compose_file="$1"
+	local override_file="$2"
+	local jeff_file="$3"
+	local postgres_file="$4"
 
 	local p
 	for p in "${!PRESERVED_VALUES[@]}"; do
 		[[ -n ${PRESERVED_VALUES[$p]} ]] || continue
 
+		replace_placeholder_in_file "$compose_file" "$p" "${PRESERVED_VALUES[$p]}"
 		replace_placeholder_in_file "$override_file" "$p" "${PRESERVED_VALUES[$p]}"
 		replace_placeholder_in_file "$jeff_file" "$p" "${PRESERVED_VALUES[$p]}"
 		replace_placeholder_in_file "$postgres_file" "$p" "${PRESERVED_VALUES[$p]}"
@@ -2169,6 +2171,7 @@ refresh_generated_compose_files_from_templates() {
 		"$postgres_file"
 
 	restore_preserved_values \
+		"$compose_file" \
 		"$override_file" \
 		"$jeff_file" \
 		"$postgres_file"
@@ -2717,4 +2720,68 @@ function configure_jeff_file() {
 	fi
 
 	echo "Updated $jeff_file"
+}
+
+function update_compose_image_placeholders() {
+	local compose_file="$1"
+	local jeff_file="$2"
+	local postgres_file="$3"
+
+	local startleft_image reporting_module_image
+	local nginx_image tomcat_image
+	local jeff_image rag_image ash_image haven_image
+	local postgres_image redis_image
+
+	[[ -f $compose_file ]] || {
+		echo "ERROR: compose file not found: $compose_file" >&2
+		exit 1
+	}
+
+	startleft_image="$(image_ref "startleft")"
+	reporting_module_image="$(image_ref "reporting-module")"
+
+	# Main compose placeholders
+	replace_placeholder_in_file "$compose_file" "STARTLEFT_IMAGE" "$startleft_image"
+	replace_placeholder_in_file "$compose_file" "REPORTING_MODULE_IMAGE" "$reporting_module_image"
+
+	if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
+		nginx_image="$(image_ref "nginx")"
+		tomcat_image="$(image_ref "tomcat-4")"
+
+		replace_placeholder_in_file "$compose_file" "NGINX_IMAGE" "$nginx_image"
+		replace_placeholder_in_file "$compose_file" "TOMCAT_IMAGE" "$tomcat_image"
+
+		if [[ -f $jeff_file ]]; then
+			jeff_image="$(image_ref "ai-jeff-4.6.2")"
+			rag_image="$(image_ref "ai-rag-1.2.2")"
+			ash_image="$(image_ref "ai-ash-1.7.0")"
+			haven_image="$(image_ref "ai-haven-1.0.1")"
+			redis_image="$(redis_image_ref)"
+
+			replace_placeholder_in_file "$jeff_file" "JEFF_IMAGE" "$jeff_image"
+			replace_placeholder_in_file "$jeff_file" "RAG_IMAGE" "$rag_image"
+			replace_placeholder_in_file "$jeff_file" "ASH_IMAGE" "$ash_image"
+			replace_placeholder_in_file "$jeff_file" "HAVEN_IMAGE" "$haven_image"
+			replace_placeholder_in_file "$jeff_file" "REDIS_IMAGE" "$redis_image"
+		fi
+
+		if [[ -f $postgres_file ]]; then
+			postgres_image="$(postgres_image_ref)"
+			replace_placeholder_in_file "$postgres_file" "POSTGRES_IMAGE" "$postgres_image"
+		fi
+	else
+		# Podman: leave localhost/... images alone.
+		# Only replace placeholders that are intentionally registry-driven.
+		if [[ -f $jeff_file ]]; then
+			redis_image="$(redis_image_ref)"
+			replace_placeholder_in_file "$jeff_file" "REDIS_IMAGE" "$redis_image"
+		fi
+
+		if [[ -f $postgres_file ]]; then
+			postgres_image="$(postgres_image_ref)"
+			replace_placeholder_in_file "$postgres_file" "POSTGRES_IMAGE" "$postgres_image"
+		fi
+	fi
+
+	echo "Updated compose image placeholders"
 }

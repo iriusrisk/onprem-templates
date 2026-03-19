@@ -93,6 +93,8 @@ done
 
 echo "All templates copied successfully."
 
+update_compose_image_placeholders "$COMPOSE_FILE" "$JEFF_FILE" "$POSTGRES_FILE"
+
 # —————————————————————————————————————————————————————————————
 # Run preflight and capture output
 # —————————————————————————————————————————————————————————————

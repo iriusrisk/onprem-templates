@@ -18,6 +18,7 @@ prompt_engine
 OVERRIDE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
 JEFF_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
 COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+POSTGRES_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.yml"
 
 # —————————————————————————————————————————————————————————————
 # Prompt for key values (with validation)
@@ -50,7 +51,6 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 fi
 
 configure_jeff_file "$JEFF_FILE"
-
 create_certificates "$HOST_NAME"
 
 # —————————————————————————————————————————————————————————————

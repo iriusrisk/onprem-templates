@@ -129,6 +129,7 @@ function prompt_registry_settings() {
 				REGISTRY_URL=$(prompt_nonempty "Enter registry URL")
 				REGISTRY_NAMESPACE=$(prompt_nonempty "Enter image repository path (e.g. myteam/iriusrisk-prod)")
 				REGISTRY_USERNAME=$(prompt_nonempty "Enter registry username")
+				container_registry_login
 				break
 				;;
 			*)

@@ -34,9 +34,31 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Validate docker-compose syntax
-        run: docker-compose -f templates/docker/docker-compose.tpl -f templates/docker/docker-compose.override.tpl -f templates/docker/docker-compose.postgres.tpl -f templates/docker/docker-compose.jeff.tpl config
+        env:
+          NGINX_IMAGE: dummy/nginx
+          TOMCAT_IMAGE: dummy/tomcat
+          STARTLEFT_IMAGE: dummy/startleft
+          REPORTING_MODULE_IMAGE: dummy/reporting
+          POSTGRES_IMAGE: dummy/postgres
+          JEFF_IMAGE: dummy/jeff
+          RAG_IMAGE: dummy/rag
+          ASH_IMAGE: dummy/ash
+          HAVEN_IMAGE: dummy/haven
+          REDIS_IMAGE: dummy/redis
+        run: docker-compose \
+          -f templates/docker/docker-compose.tpl \
+          -f templates/docker/docker-compose.override.tpl \
+          -f templates/docker/docker-compose.postgres.tpl \
+          -f templates/docker/docker-compose.jeff.tpl \
+          config
 
       - name: Validate Podman config
+        env:
+          NGINX_IMAGE: dummy/nginx
+          TOMCAT_IMAGE: dummy/tomcat
+          STARTLEFT_IMAGE: dummy/startleft
+          REPORTING_MODULE_IMAGE: dummy/reporting
+          POSTGRES_IMAGE: dummy/postgres
         run: docker-compose -f templates/podman/podman-compose.tpl config
 
       - name: Set up Python

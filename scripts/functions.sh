@@ -449,9 +449,7 @@ function install_and_configure_postgres() {
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		# Docker path: superuser password is DB_PASS from compose
 		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS'
-		""
 		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER
-		""
 	else
 		# Podman path: wrapper set superuser password to DB_PASS in-memory
 		podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'" | grep -q 1 ||

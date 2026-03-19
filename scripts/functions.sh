@@ -2046,8 +2046,14 @@ function capture_preserved_values() {
 			GEMINI_ENDPOINT)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
 				;;
-			AZURE_ENDPOINT | AZURE_OPENAI_ENDPOINT)
-				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+			AZURE_ENDPOINT)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
+				;;
+			AZURE_OPENAI_ENDPOINT)
+				if [[ -n $jeff_file ]]; then
+					PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_OPENAI_ENDPOINT" "$jeff_file" || true)"
+					[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
+				fi
 				;;
 			AZURE_API_KEY | AZURE_OPENAI_API_KEY | GEMINI_API_KEY | REDIS_PASSWORD)
 				if [[ ${CONTAINER_ENGINE:-} == "docker" && -n $jeff_file ]]; then

@@ -187,14 +187,7 @@ if [ "$OFFLINE" -eq 1 ]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# Ensure we have up-to-date compose files
-# —————————————————————————————————————————————————————————————
-
-echo "Refreshing generated compose files from templates while preserving client-specific values..."
-refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"
-
-# —————————————————————————————————————————————————————————————
-# Setup Jeff if desired
+# Decide on Jeff handling
 # —————————————————————————————————————————————————————————————
 OVERRIDE_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
 JEFF_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
@@ -223,6 +216,17 @@ else
 fi
 
 export JEFF_ENABLED
+
+# —————————————————————————————————————————————————————————————
+# Ensure we have up-to-date compose files
+# —————————————————————————————————————————————————————————————
+
+echo "Refreshing generated compose files from templates while preserving client-specific values..."
+refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGINE" "$CONTAINER_ENGINE"
+
+# —————————————————————————————————————————————————————————————
+# Setup Jeff if enabled now but not previously (pre-upgrade)
+# —————————————————————————————————————————————————————————————
 
 if [[ $JEFF_NEWLY_ENABLED == "y" ]]; then
 	echo "Setting up Jeff for this existing installation..."
@@ -441,15 +445,8 @@ fi
 # Update compose tomcat tag (docker) or note podman build
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
-	if grep -qE '^[[:space:]]*image:[[:space:]]*\$\{REGISTRY_URL:-docker\.io\}/\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-[0-9.]+' "$COMPOSE_YML"; then
-		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*\\\$\{REGISTRY_URL:-docker\.io\}/\\\$\{REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod\}:tomcat-)[0-9]+([.][0-9]+){0,2}([[:space:]]*(#.*)?\$)@\\1${CHOSEN_VERSION}\\4@" \
-			"$COMPOSE_YML"
-		echo "Updated tomcat image tag → \${REGISTRY_URL:-docker.io}/\${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:tomcat-${CHOSEN_VERSION}"
-	else
-		echo "ERROR: No tomcat image line found in $COMPOSE_YML (expected variable-based ':tomcat-<major>' or ':tomcat-<X.Y.Z>')." >&2
-		exit 5
-	fi
+	replace_placeholder_in_file "$COMPOSE_YML" "TOMCAT_IMAGE" "$(image_ref "tomcat-$CHOSEN_VERSION")"
+	echo "Updated tomcat image tag → $(image_ref "tomcat-$CHOSEN_VERSION")"
 else
 	echo "Compose uses localhost/tomcat-rhel; will rebuild the local image instead of sed."
 fi

@@ -1304,25 +1304,30 @@ function read_podman_secret_plaintext() {
 # Helper: update image line for a component that may be unversioned or versioned already
 # Usage: update_component_tag startleft "$SL_VER"
 function update_component_tag() {
-	local comp="$1" ver="$2"
-	local registry_url_escaped registry_ns_escaped
+	local comp="$1"
+	local ver="$2"
 
 	[[ -z $ver ]] && {
 		echo "NOTE: No version provided for $comp in JSON; skipping."
 		return 0
 	}
 
-	registry_url_escaped=$(printf '%s' "${REGISTRY_URL:-docker.io}" | sed 's/[.[\*^$()+?{|]/\\&/g')
-	registry_ns_escaped=$(printf '%s' "${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}" | sed 's/[.[\*^$()+?{|]/\\&/g')
+	local placeholder=""
+	case "$comp" in
+		startleft)
+			placeholder="STARTLEFT_IMAGE"
+			;;
+		reporting-module)
+			placeholder="REPORTING_MODULE_IMAGE"
+			;;
+		*)
+			echo "WARNING: Unsupported component for update_component_tag: $comp"
+			return 0
+			;;
+	esac
 
-	if grep -qE "^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
-		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
-			"$COMPOSE_YML"
-		echo "Updated ${comp} image tag → ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${comp}-${ver}"
-	else
-		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
-	fi
+	replace_placeholder_in_file "$COMPOSE_YML" "$placeholder" "$(image_ref "${comp}-${ver}")"
+	echo "Updated ${comp} image tag → $(image_ref "${comp}-${ver}")"
 }
 
 function configure_ip_pass() {
@@ -1976,12 +1981,19 @@ function capture_preserved_values() {
 	local override_file="$2"
 	local jeff_file="$3"
 	local postgres_file="$4"
-	local override_template="$5"
-	local jeff_template="$6"
-	local postgres_template="$7"
+	local compose_template="$5"
+	local override_template="$6"
+	local jeff_template="$7"
+	local postgres_template="$8"
 
 	local all_placeholders=()
 	local p
+
+	if [[ -n $compose_template && -f $compose_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$compose_template")
+	fi
 
 	if [[ -n $override_template && -f $override_template ]]; then
 		while IFS= read -r p; do
@@ -2003,6 +2015,7 @@ function capture_preserved_values() {
 
 	if [[ ${#all_placeholders[@]} -eq 0 ]]; then
 		echo "ERROR: No placeholders discovered from templates." >&2
+		echo "  compose_template=$compose_template" >&2
 		echo "  override_template=$override_template" >&2
 		echo "  jeff_template=$jeff_template" >&2
 		echo "  postgres_template=$postgres_template" >&2
@@ -2030,10 +2043,20 @@ function capture_preserved_values() {
 			AZURE_ENDPOINT | AZURE_API_KEY | AZURE_OPENAI_API_KEY | AZURE_OPENAI_ENDPOINT | GEMINI_API_KEY | REDIS_PASSWORD)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
 				;;
+			NGINX_IMAGE | TOMCAT_IMAGE | STARTLEFT_IMAGE | REPORTING_MODULE_IMAGE)
+				PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$compose_file" || true)"
+				;;
+			JEFF_IMAGE | RAG_IMAGE | ASH_IMAGE | HAVEN_IMAGE | REDIS_IMAGE)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$jeff_file" || true)"
+				;;
+			POSTGRES_IMAGE)
+				PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$postgres_file" || true)"
+				;;
 			*)
 				PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$override_file" || true)"
 				[[ -z ${PRESERVED_VALUES[$p]} ]] && [[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
 				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$compose_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$postgres_file" || true)"
 				;;
 		esac
 	done
@@ -2103,7 +2126,110 @@ function restore_preserved_values() {
 	echo "Re-applied preserved client values to refreshed compose files."
 }
 
-refresh_generated_compose_files_from_templates() {
+function extract_image_value_for_placeholder() {
+	local placeholder="$1"
+	local file="$2"
+
+	[[ -f $file ]] || return 1
+
+	case "$placeholder" in
+		NGINX_IMAGE)
+			awk '/^[[:space:]]*nginx:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		TOMCAT_IMAGE)
+			awk '/^[[:space:]]*tomcat:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		STARTLEFT_IMAGE)
+			awk '/^[[:space:]]*startleft:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		REPORTING_MODULE_IMAGE)
+			awk '/^[[:space:]]*reporting-module:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		JEFF_IMAGE)
+			awk '/^[[:space:]]*jeff:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		RAG_IMAGE)
+			awk '/^[[:space:]]*rag:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		ASH_IMAGE)
+			awk '/^[[:space:]]*ash:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		HAVEN_IMAGE)
+			awk '/^[[:space:]]*haven:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		REDIS_IMAGE)
+			awk '/^[[:space:]]*redis:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		POSTGRES_IMAGE)
+			awk '/^[[:space:]]*postgres:[[:space:]]*$/ {in_service=1; next}
+			     in_service && /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {in_service=0}
+			     in_service && /^[[:space:]]*image:[[:space:]]*/ {
+			         sub(/^[[:space:]]*image:[[:space:]]*/, "", $0)
+			         print
+			         exit
+			     }' "$file"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+function refresh_generated_compose_files_from_templates() {
 	PRESERVED_VALUES=()
 
 	local compose_dir="$1"
@@ -2154,6 +2280,7 @@ refresh_generated_compose_files_from_templates() {
 		"$override_file" \
 		"$jeff_file" \
 		"$postgres_file" \
+		"$compose_template" \
 		"$override_template" \
 		"$jeff_template" \
 		"$postgres_template"

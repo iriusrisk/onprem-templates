@@ -227,14 +227,14 @@ refresh_generated_compose_files_from_templates "$SCRIPT_PATH/../$CONTAINER_ENGIN
 POSTGRES_FILE="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.yml"
 COMPOSE_YML="$SCRIPT_PATH/../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
 
-update_compose_image_placeholders "$COMPOSE_YML" "$JEFF_FILE" "$POSTGRES_FILE"
-
 # —————————————————————————————————————————————————————————————
 # Setup Jeff if enabled now but not previously (pre-upgrade)
 # —————————————————————————————————————————————————————————————
 
 if [[ $JEFF_NEWLY_ENABLED == "y" ]]; then
 	echo "Setting up Jeff for this existing installation..."
+
+	update_compose_image_placeholders "$COMPOSE_YML" "$JEFF_FILE" "$POSTGRES_FILE"
 
 	prompt_jeff_config
 	enable_jeff_override_env "$OVERRIDE_FILE"

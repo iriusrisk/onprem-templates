@@ -69,9 +69,121 @@ function prompt_postgres_option() {
 	POSTGRES_SETUP_OPTION="$pg_option"
 }
 
+: "${REGISTRY_URL:=docker.io}"
+: "${REGISTRY_NAMESPACE:=continuumsecurity/iriusrisk-prod}"
+: "${REGISTRY_USERNAME:=iriusrisk}"
+: "${POSTGRES_BASE_IMAGE:=docker.io/library/postgres:15.4}"
+: "${REDIS_BASE_IMAGE:=docker.io/redis/redis-stack:latest}"
+
+function image_ref() {
+	local tag="$1"
+	echo "${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${tag}"
+}
+
+function prompt_registry_settings() {
+	if [ "${OFFLINE:-0}" -eq 1 ]; then
+		echo "Offline mode detected."
+		echo "Select option 1 if you are using the bundle images as provided (default tags)."
+		echo "Select option 2 only if you need to retag images to a custom registry/namespace."
+		echo
+	fi
+
+	echo "Container image source:"
+	echo "  1) Default IriusRisk registry"
+	echo "  2) Custom registry"
+
+	while true; do
+		read -rp "Enter 1 or 2: " registry_option
+		case "$registry_option" in
+			1)
+				REGISTRY_URL="docker.io"
+				REGISTRY_NAMESPACE="continuumsecurity/iriusrisk-prod"
+				REGISTRY_USERNAME="iriusrisk"
+				break
+				;;
+			2)
+				REGISTRY_URL=$(prompt_nonempty "Enter registry URL")
+				REGISTRY_NAMESPACE=$(prompt_nonempty "Enter image repository path (e.g. myteam/iriusrisk-prod)")
+				REGISTRY_USERNAME=$(prompt_nonempty "Enter registry username")
+				break
+				;;
+			*)
+				echo "Invalid input: '$registry_option'. Please enter 1 or 2."
+				;;
+		esac
+	done
+
+	export REGISTRY_URL REGISTRY_NAMESPACE REGISTRY_USERNAME
+}
+
 function prompt_registry_password() {
-	read -srp "Enter the container registry password for user 'iriusrisk': " REGISTRY_PASS
+	local registry_user="${REGISTRY_USERNAME:-iriusrisk}"
+	read -srp "Enter the container registry password for user '${registry_user}': " REGISTRY_PASS
 	echo
+}
+
+function prompt_postgres_image_source() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
+		export POSTGRES_BASE_IMAGE
+		echo "Using default PostgreSQL base image: $POSTGRES_BASE_IMAGE"
+		return 0
+	fi
+
+	echo "PostgreSQL base image source:"
+	echo "  1) Default public image (docker.io/library/postgres:15.4)"
+	echo "  2) Custom image"
+
+	while true; do
+		read -rp "Enter 1 or 2: " pg_img_option
+		case "$pg_img_option" in
+			1)
+				POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
+				break
+				;;
+			2)
+				POSTGRES_BASE_IMAGE=$(prompt_nonempty "Enter PostgreSQL base image reference")
+				break
+				;;
+			*)
+				echo "Invalid input: '$pg_img_option'. Please enter 1 or 2."
+				;;
+		esac
+	done
+
+	export POSTGRES_BASE_IMAGE
+}
+
+function prompt_redis_image_source() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		REDIS_BASE_IMAGE="docker.io/redis/redis-stack:latest"
+		export REDIS_BASE_IMAGE
+		echo "Using default Redis base image: $REDIS_BASE_IMAGE"
+		return 0
+	fi
+
+	echo "Redis base image source:"
+	echo "  1) Default public image (docker.io/redis/redis-stack:latest)"
+	echo "  2) Custom image"
+
+	while true; do
+		read -rp "Enter 1 or 2: " redis_img_option
+		case "$redis_img_option" in
+			1)
+				REDIS_BASE_IMAGE="docker.io/redis/redis-stack:latest"
+				break
+				;;
+			2)
+				REDIS_BASE_IMAGE=$(prompt_nonempty "Enter Redis base image reference")
+				break
+				;;
+			*)
+				echo "Invalid input: '$redis_img_option'. Please enter 1 or 2."
+				;;
+		esac
+	done
+
+	export REDIS_BASE_IMAGE
 }
 
 function prompt_for_docker_user() {
@@ -153,6 +265,12 @@ function install_docker() {
 	fi
 }
 
+function ensure_podman_network_kernel_modules() {
+	echo "Ensuring required Podman networking kernel modules are loaded..."
+	sudo modprobe ip_tables || true
+	sudo modprobe iptable_nat || true
+}
+
 function install_podman() {
 	echo "Installing Podman and podman-compose..."
 	sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true
@@ -160,6 +278,9 @@ function install_podman() {
 		sudo dnf install -y podman python3-pip
 		python3 -m pip install --upgrade --user podman-compose python-dotenv
 	}
+
+	# Ensure required networking kernel modules are loaded
+	ensure_podman_network_kernel_modules
 }
 
 function install_git() {
@@ -256,12 +377,21 @@ function install_and_configure_postgres() {
 		sg docker -c "$compose_tool -f $(basename "$postgres_file") up -d postgres"
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		local compose_tool="podman-compose"
+		local base_image
+
+		if [[ $OFFLINE -eq 0 ]]; then
+			prompt_postgres_image_source
+		fi
+		base_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
+
+		# Ensure required networking kernel modules are loaded before any podman networking work
+		ensure_podman_network_kernel_modules
 
 		# Create and encrypt db pass secret
 		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
 
 		if [[ $OFFLINE -eq 0 ]]; then
-			build_podman_secret_image "docker.io/library/postgres:15.4" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' 'docker-entrypoint.sh "$@"'
+			build_podman_secret_image "$base_image" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' 'docker-entrypoint.sh "$@"'
 		fi
 
 		# --- Graceful down then hard teardown for a clean slate ---
@@ -273,6 +403,9 @@ function install_and_configure_postgres() {
 		if [[ -n $ids ]]; then podman rm -f $ids || true; fi
 
 		sudo rm -rf ./postgres/data
+
+		# Ensure required networking kernel modules are loaded again before compose up
+		ensure_podman_network_kernel_modules
 
 		# Bring up just Postgres (with secrets override)
 		eval "$compose_tool -f $(basename "$postgres_file") up -d postgres"
@@ -288,7 +421,7 @@ function install_and_configure_postgres() {
 	while true; do
 		if [[ $CONTAINER_ENGINE == "docker" ]]; then
 			# Use sg docker -c to ensure group permissions are applied
-			if sg docker -c "docker exec iriusrisk-postgres pg_isready -U \"$PG_SUPERUSER\"" >/dev/null 2>&1; then
+			if sg docker -c "docker exec iriusrisk-postgres pg_isready -U "$PG_SUPERUSER"" >/dev/null 2>&1; then
 				break
 			fi
 		else
@@ -315,8 +448,10 @@ function install_and_configure_postgres() {
 	# Create or update the app user/database (idempotent)
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		# Docker path: superuser password is DB_PASS from compose
-		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc \"SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'\" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS';\""
-		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc \"SELECT 1 FROM pg_database WHERE datname = '$PG_DB'\" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c \"CREATE DATABASE $PG_DB WITH OWNER $PG_USER;\""
+		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE USER $PG_USER WITH CREATEDB PASSWORD '$DB_PASS'
+		""
+		sg docker -c "docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -tc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'" | grep -q 1 || docker exec -e PGPASSWORD='$DB_PASS' iriusrisk-postgres psql -U $PG_SUPERUSER -c "CREATE DATABASE $PG_DB WITH OWNER $PG_USER
+		""
 	else
 		# Podman path: wrapper set superuser password to DB_PASS in-memory
 		podman exec -e PGPASSWORD="$DB_PASS" iriusrisk-postgres psql -U "$PG_SUPERUSER" -tc "SELECT 1 FROM pg_roles WHERE rolname = '$PG_USER'" | grep -q 1 ||
@@ -451,10 +586,11 @@ function create_certificates() {
 	echo "📄 Certificates present in $CERT_DIR"
 }
 
-function is_logged_in_as_iriusrisk() {
+function is_logged_in_to_registry_user() {
+	local expected_user="${REGISTRY_USERNAME:-iriusrisk}"
+	local auth_key_primary="${REGISTRY_URL:-docker.io}"
+	local auth_key_dockerhub_alt="https://index.docker.io/v1/"
 	local config_candidates=()
-	local auth_key_dockerhub1="docker.io"
-	local auth_key_dockerhub2="https://index.docker.io/v1/"
 	local auth_base64=""
 	local auth_user=""
 
@@ -474,35 +610,36 @@ function is_logged_in_as_iriusrisk() {
 	for cfg in "${config_candidates[@]}"; do
 		[[ -f $cfg ]] || continue
 		if [[ $cfg == "/run/containers/0/auth.json" ]]; then
-			auth_base64=$(sudo jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
+			auth_base64=$(sudo jq -r ".auths[\"$auth_key_primary\"].auth // .auths[\"$auth_key_dockerhub_alt\"].auth // empty" "$cfg" 2>/dev/null)
 		else
-			auth_base64=$(jq -r ".auths[\"$auth_key_dockerhub1\"].auth // .auths[\"$auth_key_dockerhub2\"].auth // empty" "$cfg" 2>/dev/null)
+			auth_base64=$(jq -r ".auths[\"$auth_key_primary\"].auth // .auths[\"$auth_key_dockerhub_alt\"].auth // empty" "$cfg" 2>/dev/null)
 		fi
 		[[ -n $auth_base64 ]] && break
 	done
 
 	[[ -z $auth_base64 ]] && return 1
 	auth_user=$(echo "$auth_base64" | base64 -d 2>/dev/null | cut -d: -f1)
-	[[ $auth_user == "iriusrisk" ]]
+	[[ $auth_user == "$expected_user" ]]
 }
 
 function container_registry_login() {
-	local registry_url="${1:-}"
+	local registry_url="${REGISTRY_URL:-docker.io}"
+	local registry_user="${REGISTRY_USERNAME:-iriusrisk}"
 
-	if is_logged_in_as_iriusrisk $CONTAINER_ENGINE; then
-		echo "Already logged in to Docker Hub as 'iriusrisk', skipping login prompt."
+	if is_logged_in_to_registry_user; then
+		echo "Already logged in to registry '$registry_url' as '$registry_user', skipping login prompt."
 		return 0
 	fi
 
-	prompt_registry_password
+	[[ -z ${REGISTRY_PASS:-} ]] && prompt_registry_password
 
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
-		echo "$REGISTRY_PASS" | docker login -u iriusrisk --password-stdin
+		echo "$REGISTRY_PASS" | docker login "$registry_url" -u "$registry_user" --password-stdin
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		if [[ "$(id -u)" -eq 0 ]]; then
-			echo "$REGISTRY_PASS" | sudo podman login -u iriusrisk docker.io --password-stdin
+			echo "$REGISTRY_PASS" | sudo podman login "$registry_url" -u "$registry_user" --password-stdin
 		else
-			echo "$REGISTRY_PASS" | podman login -u iriusrisk docker.io --password-stdin
+			echo "$REGISTRY_PASS" | podman login "$registry_url" -u "$registry_user" --password-stdin
 		fi
 	else
 		echo "Unknown container engine: $CONTAINER_ENGINE" >&2
@@ -739,46 +876,50 @@ function build_podman_custom_images() {
 
 	echo "Preparing custom images for version: tomcat-${tv}"
 
+	local nginx_image tomcat_image postgres_image jeff_image rag_image ash_image haven_image redis_image
+	nginx_image="$(image_ref "nginx")"
+	tomcat_image="$(image_ref "tomcat-${tv}")"
+	postgres_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
+	jeff_image="$(image_ref "ai-jeff-4.6.2")"
+	rag_image="$(image_ref "ai-rag-1.2.2")"
+	ash_image="$(image_ref "ai-ash-1.7.0")"
+	haven_image="$(image_ref "ai-haven-1.0.1")"
+	redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
+
+	if [[ $OFFLINE -eq 0 && ${JEFF_ENABLED:-n} == "y" ]]; then
+		prompt_redis_image_source
+		redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
+	fi
+
 	podman rm -f temp-nginx temp-tomcat temp-postgres temp-jeff temp-rag temp-ash temp-haven temp-redis 2>/dev/null || true
 
 	if [ "$OFFLINE" -eq 0 ]; then
 		echo "Pulling base images..."
-		podman pull docker.io/continuumsecurity/iriusrisk-prod:nginx >/dev/null
-		podman pull "docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >/dev/null || {
-			echo "ERROR: Unable to pull docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" >&2
+		podman pull "$nginx_image" >/dev/null
+		podman pull "$tomcat_image" >/dev/null || {
+			echo "ERROR: Unable to pull $tomcat_image" >&2
 			return 1
 		}
-		podman pull docker.io/library/postgres:15.4 >/dev/null
+		podman pull "$postgres_image" >/dev/null
 		if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
-			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-jeff-4.6.2 >/dev/null
-			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-rag-1.2.2 >/dev/null
-			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-ash-1.7.0 >/dev/null
-			podman pull docker.io/continuumsecurity/iriusrisk-prod:ai-haven-1.0.1 >/dev/null
-			podman pull docker.io/redis/redis-stack:latest >/dev/null
+			podman pull "$jeff_image" >/dev/null
+			podman pull "$rag_image" >/dev/null
+			podman pull "$ash_image" >/dev/null
+			podman pull "$haven_image" >/dev/null
+			podman pull "$redis_image" >/dev/null
 		fi
 	fi
 
 	echo "Customizing nginx → localhost/nginx-rhel"
-	build_podman_secret_image \
-		"docker.io/continuumsecurity/iriusrisk-prod:nginx" \
-		"temp-nginx" \
-		"localhost/nginx-rhel" \
-		"" \
-		'nginx -g "daemon off;"' \
-		'if [ -f /etc/alpine-release ]; then
+	build_podman_secret_image "$nginx_image" "temp-nginx" "localhost/nginx-rhel" "" 'nginx -g "daemon off;"' 'if [ -f /etc/alpine-release ]; then
 		   apk add --no-cache libcap;
 		 else
 		   (apt-get update && apt-get install -y --no-install-recommends libcap2-bin && rm -rf /var/lib/apt/lists/*) || true;
 		 fi;
-		 command -v setcap >/dev/null 2>&1 && setcap "cap_net_bind_service=+ep" /usr/sbin/nginx || true' \
-		"nginx"
+		 command -v setcap >/dev/null 2>&1 && setcap "cap_net_bind_service=+ep" /usr/sbin/nginx || true' "nginx"
 
 	echo "Customizing tomcat (base tomcat-${tv}) → localhost/tomcat-rhel"
-	build_podman_secret_image \
-		"docker.io/continuumsecurity/iriusrisk-prod:tomcat-${tv}" \
-		"temp-tomcat" \
-		"localhost/tomcat-rhel" \
-		$'if [ -n "$(printenv DB_PWD_GPG 2>/dev/null || true)" ] && [ -n "$(printenv DB_PRIVKEY_ASC 2>/dev/null || true)" ]; then
+	build_podman_secret_image "$tomcat_image" "temp-tomcat" "localhost/tomcat-rhel" $'if [ -n "$(printenv DB_PWD_GPG 2>/dev/null || true)" ] && [ -n "$(printenv DB_PRIVKEY_ASC 2>/dev/null || true)" ]; then
   tmpdir="$(mktemp -d)"
   cipher_file="$tmpdir/db_pwd.gpg"
   priv_file="$tmpdir/db_privkey.asc"
@@ -792,51 +933,24 @@ function build_podman_custom_images() {
   fi
 fi
 export_from_secret_env KEYSTORE_PASSWORD KEYSTORE_PWD_GPG KEYSTORE_PRIVKEY_ASC
-export_from_secret_env KEY_ALIAS_PASSWORD KEY_ALIAS_PWD_GPG KEY_ALIAS_PRIVKEY_ASC' \
-		'/entrypoint/dynamic-entrypoint.sh "$@"' \
-		"" \
-		"tomcat"
+export_from_secret_env KEY_ALIAS_PASSWORD KEY_ALIAS_PWD_GPG KEY_ALIAS_PRIVKEY_ASC' '/entrypoint/dynamic-entrypoint.sh "$@"' "" "tomcat"
 
 	echo "Customizing postgres → localhost/postgres-gpg:15.4"
-	build_podman_secret_image \
-		"docker.io/library/postgres:15.4" \
-		"temp-postgres" \
-		"localhost/postgres-gpg:15.4" \
-		'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' \
-		'docker-entrypoint.sh "$@"'
+	build_podman_secret_image "$postgres_image" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' 'docker-entrypoint.sh "$@"'
 
 	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
 		echo "Customizing Jeff-related images with Podman secrets"
-		build_podman_secret_image \
-			"docker.io/continuumsecurity/iriusrisk-prod:ai-jeff-4.6.2" \
-			"temp-jeff" \
-			"localhost/ai-jeff-4.6.2" \
-			"$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
+		build_podman_secret_image "$jeff_image" "temp-jeff" "localhost/ai-jeff-4.6.2" "$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
-		build_podman_secret_image \
-			"docker.io/continuumsecurity/iriusrisk-prod:ai-rag-1.2.2" \
-			"temp-rag" \
-			"localhost/ai-rag-1.2.2" \
-			"$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
+		build_podman_secret_image "$rag_image" "temp-rag" "localhost/ai-rag-1.2.2" "$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
-		build_podman_secret_image \
-			"docker.io/continuumsecurity/iriusrisk-prod:ai-ash-1.7.0" \
-			"temp-ash" \
-			"localhost/ai-ash-1.7.0" \
-			$'export_from_secret_env GEMINI_API_KEY GEMINI_API_KEY_GPG GEMINI_API_PRIVKEY_ASC\nexport_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC'
+		build_podman_secret_image "$ash_image" "temp-ash" "localhost/ai-ash-1.7.0" $'export_from_secret_env GEMINI_API_KEY GEMINI_API_KEY_GPG GEMINI_API_PRIVKEY_ASC
+export_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC'
 
-		build_podman_secret_image \
-			"docker.io/continuumsecurity/iriusrisk-prod:ai-haven-1.0.1" \
-			"temp-haven" \
-			"localhost/ai-haven-1.0.1" \
-			$'export_from_secret_env AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC\nexport_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC'
+		build_podman_secret_image "$haven_image" "temp-haven" "localhost/ai-haven-1.0.1" $'export_from_secret_env AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
+export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC'
 
-		build_podman_secret_image \
-			"docker.io/redis/redis-stack:latest" \
-			"temp-redis" \
-			"localhost/redis-stack-gpg:latest" \
-			'export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC' \
-			'redis-stack-server --requirepass "$REDIS_PASSWORD"'
+		build_podman_secret_image "$redis_image" "temp-redis" "localhost/redis-stack-gpg:latest" 'export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC' 'redis-stack-server --requirepass "$REDIS_PASSWORD"'
 	fi
 
 	echo "Custom images ready for Podman deployment"
@@ -1236,20 +1350,21 @@ function read_podman_secret_plaintext() {
 # Usage: update_component_tag startleft "$SL_VER"
 function update_component_tag() {
 	local comp="$1" ver="$2"
+	local registry_url_escaped registry_ns_escaped
+
 	[[ -z $ver ]] && {
 		echo "NOTE: No version provided for $comp in JSON; skipping."
 		return 0
 	}
 
-	# Match:
-	#   image: docker.io/continuumsecurity/iriusrisk-prod:<comp>
-	#   image: docker.io/continuumsecurity/iriusrisk-prod:<comp>-<digits[.digits...]>
-	# (docker.io/ prefix optional; whitespace & comments preserved)
-	if grep -qE "^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
+	registry_url_escaped=$(printf '%s' "${REGISTRY_URL:-docker.io}" | sed 's/[.[\*^$()+?{|]/\\&/g')
+	registry_ns_escaped=$(printf '%s' "${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}" | sed 's/[.[\*^$()+?{|]/\\&/g')
+
+	if grep -qE "^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
 		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(docker\.io/)?continuumsecurity/iriusrisk-prod:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
+			"s@(^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
 			"$COMPOSE_YML"
-		echo "Updated ${comp} image tag → docker.io/continuumsecurity/iriusrisk-prod:${comp}-${ver}"
+		echo "Updated ${comp} image tag → ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${comp}-${ver}"
 	else
 		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
 	fi
@@ -1304,6 +1419,13 @@ function detect_engine_ctx() {
 	SERVICE_NAME="iriusrisk-$CONTAINER_ENGINE.service"
 	NEED_DOCKER_CFG=""
 
+	local extra_registry_env=""
+	if [[ ${REGISTRY_URL:-docker.io} != "docker.io" || ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} != "continuumsecurity/iriusrisk-prod" ]]; then
+		extra_registry_env=$'
+Environment=REGISTRY_URL='"${REGISTRY_URL}"$'
+Environment=REGISTRY_NAMESPACE='"${REGISTRY_NAMESPACE}"
+	fi
+
 	case "$ENGINE" in
 		docker)
 			COMPOSE_INVOKE="docker-compose"
@@ -1313,7 +1435,8 @@ function detect_engine_ctx() {
 			SYSTEMCTL="sudo systemctl"
 			UNIT_AFTER=$'After=network.target docker.service'
 			UNIT_REQUIRES=$'Requires=docker.service'
-			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'
+			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker
+Environment=COMPOSE_INTERACTIVE_NO_CLI=1'"${extra_registry_env}"
 			NEED_DOCKER_CFG="true"
 			;;
 		podman)
@@ -1322,9 +1445,10 @@ function detect_engine_ctx() {
 			UNIT_SCOPE="user"
 			UNIT_DIR="$HOME/.config/systemd/user"
 			SYSTEMCTL="systemctl --user"
-			UNIT_AFTER=$'After=network-online.target\nWants=network-online.target'
+			UNIT_AFTER=$'After=network-online.target
+Wants=network-online.target'
 			UNIT_REQUIRES=""
-			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'
+			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'"${extra_registry_env}"
 			;;
 		*)
 			echo "Unknown engine '$ENGINE'." >&2
@@ -1367,6 +1491,9 @@ function deploy_stack() {
 	fi
 
 	if [[ $ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
+		# Ensure required networking kernel modules are loaded before podman compose/network work
+		ensure_podman_network_kernel_modules
+
 		# Build custom images for Podman
 		build_podman_custom_images
 	fi

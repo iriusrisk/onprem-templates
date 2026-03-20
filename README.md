@@ -3,7 +3,7 @@
 This repository includes **automation scripts** to fully set up an IriusRisk on-prem deployment on a fresh server.  
 They install dependencies, configure PostgreSQL, generate certificates, and deploy containers via Docker or Podman in rootless mode.
 
-⚠️ **Important Warning**  
+⚠️ **Important Warnings**  
 These scripts are intended to be run on a **completely fresh machine**.  
 If an existing PostgreSQL installation (standalone, containerized, or otherwise) is present on the **same machine**, and you choose to set up PostgreSQL on the same machine, these scripts will either:
 
@@ -11,6 +11,8 @@ If an existing PostgreSQL installation (standalone, containerized, or otherwise)
 - Wipe the existing PostgreSQL setup, including its databases.
 
 Do **not** run these scripts on a machine that already has a PostgreSQL database you care about.
+
+⚠️ **First upgrade after 20/03/2026? Read the note under the Upgrading IriusRisk section before running `git pull`.**
 
 ---
 
@@ -208,6 +210,82 @@ sudo systemctl restart iriusrisk-docker
 
 
 ## 🔄 Upgrading IriusRisk
+
+### ⚠️ Important: First Upgrade After 20/03/2026
+
+If you are upgrading an existing installation **for the first time after 20/03/2026**, you must perform a one-time manual step before running `git pull`.
+
+This change introduces a new **template-based compose system** designed to prevent configuration drift and merge conflicts.
+
+### 🔧 Required One-Time Step
+
+Before pulling the latest changes, you must temporarily move your existing **compose files** out of the repository.
+
+#### 1. Locate your compose files
+
+Depending on your setup, the files will be:
+
+**Docker:**
+
+```bash
+
+docker/docker-compose.yml
+docker/docker-compose.override.yml
+docker/docker-compose.postgres.yml
+docker/docker-compose.jeff.yml
+```
+
+**Podman:**
+
+```bash
+podman/podman-compose.yml
+podman/podman-compose.override.yml
+podman/podman-compose.postgres.yml
+podman/podman-compose.jeff.yml
+```
+
+#### 2. Move compose files outside the repository
+
+Move **only the compose files** (not the directory) to a temporary location such as `/tmp`:
+
+```bash
+# Docker
+mv docker/docker-compose*.yml /tmp/ 2>/dev/null || true
+
+# Podman
+mv podman/podman-compose*.yml /tmp/ 2>/dev/null || true
+```
+
+#### 3. Pull the latest changes
+
+```bash
+git pull
+```
+
+#### 4. Move the compose files back
+
+```bash
+# Docker
+mv /tmp/docker-compose*.yml docker/ 2>/dev/null || true
+
+# Podman
+mv /tmp/podman-compose*.yml podman/ 2>/dev/null || true
+```
+
+#### 5. Continue with the upgrade
+
+```bash
+./upgrade.sh
+```
+
+### 📌 Notes
+
+- This step is **only required once**.
+- It ensures a clean transition to the new template-based system.
+- Skipping this step may result in:
+  - Merge conflicts during `git pull`
+  - Broken or overwritten compose configurations
+  - Deployment failures
 
 To upgrade an existing IriusRisk on-prem installation:
 
@@ -437,6 +515,30 @@ docker.io/myorg/iriusrisk-prod:startleft
 docker.io/myorg/iriusrisk-prod:reporting-module
 
 This allows organizations to mirror or host IriusRisk images in their own container registry.
+
+### 🐘 PostgreSQL (Internal Container)
+
+If using the **internal PostgreSQL option**, the image must be available with the following tag:
+
+```text
+postgres-15.4
+```
+
+### 🤖 Jeff (AI Assistant) Dependencies
+
+If installing **Jeff**, the following image must be available:
+
+```text
+redis-stack-latest
+```
+
+### 📌 Summary
+
+| Component        | Required Tag Format     |
+|------------------|------------------------|
+| PostgreSQL       | `postgres-15.4`        |
+| Redis (Jeff)     | `redis-stack-latest`   |
+| IriusRisk images | `<registry>/<path>:tag` |
 
 
 ## Network Requirements

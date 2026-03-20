@@ -4,7 +4,7 @@ source functions.sh
 init_logging "$0"
 
 # —————————————————————————————————————————————————————————————
-# 0. Set static variables
+# Set static variables
 # —————————————————————————————————————————————————————————————
 echo "IriusRisk On-Prem Preflight Check"
 echo "----------------------------------"
@@ -18,15 +18,16 @@ ERRORS=()
 WARNINGS=()
 
 # —————————————————————————————————————————————————————————————
-# 1. Decide on container engine & set compose locations
+# Decide on container engine & set compose locations
 # —————————————————————————————————————————————————————————————
 prompt_engine
 
 OVERRIDE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
 COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+JEFF_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
 
 # —————————————————————————————————————————————————————————————
-# 2. Check OS type
+# Check OS type
 # —————————————————————————————————————————————————————————————
 echo "Checking OS type..."
 if [[ "$(uname -s)" != "Linux" ]]; then
@@ -38,7 +39,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 3. Check for git and global git config
+# Check for git and global git config
 # —————————————————————————————————————————————————————————————
 if [ "$OFFLINE" -eq 0 ]; then
 	if command -v git &>/dev/null; then
@@ -66,7 +67,7 @@ if [ "$OFFLINE" -eq 0 ]; then
 	fi
 fi
 # —————————————————————————————————————————————————————————————
-# 4. Check chosen engine and versions
+# Check chosen engine and versions
 # —————————————————————————————————————————————————————————————
 case "$CONTAINER_ENGINE" in
 	docker)
@@ -109,7 +110,7 @@ case "$CONTAINER_ENGINE" in
 esac
 
 # —————————————————————————————————————————————————————————————
-# 5. Check dependencies
+# Check dependencies
 # —————————————————————————————————————————————————————————————
 if command -v java &>/dev/null; then
 	JAVA_FULL_VER=$(java -version 2>&1 | head -n 1)
@@ -148,7 +149,7 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 6. Check required local certificate/key files
+# Check required local certificate/key files
 # —————————————————————————————————————————————————————————————
 echo "Checking required local certificate/key files..."
 for f in cert.pem key.pem ec_private.pem; do
@@ -156,15 +157,16 @@ for f in cert.pem key.pem ec_private.pem; do
 done
 
 # —————————————————————————————————————————————————————————————
-# 7. Check override files for required variables and valid values
+# Check override files for required variables and valid values
 # —————————————————————————————————————————————————————————————
 POSTGRES_VALUES_FILLED=1
+JEFF_VALUES_FILLED=1
 
 if [[ -n $OVERRIDE_FILE && -f $OVERRIDE_FILE ]]; then
 	echo "Checking $OVERRIDE_FILE for required variables and valid values..."
 
-	NG_SERVER_NAME=$(grep NG_SERVER_NAME "$OVERRIDE_FILE" | head -1 | sed 's/.*NG_SERVER_NAME=//;s/"//g' | xargs)
-	if [[ -z $NG_SERVER_NAME || $NG_SERVER_NAME == '${HOST_NAME}' || $NG_SERVER_NAME == '${HOST_NAME}' ]]; then
+	NG_SERVER_NAME=$(grep 'NG_SERVER_NAME=' "$OVERRIDE_FILE" | head -1 | sed 's/.*NG_SERVER_NAME=//;s/"//g' | xargs)
+	if [[ -z $NG_SERVER_NAME || $NG_SERVER_NAME == '${HOST_NAME}' ]]; then
 		msg="WARNING: NG_SERVER_NAME must be set to a real value in $OVERRIDE_FILE (not left as \${HOST_NAME})"
 		echo "$msg"
 		WARNINGS+=("$msg")
@@ -172,7 +174,7 @@ if [[ -n $OVERRIDE_FILE && -f $OVERRIDE_FILE ]]; then
 		echo "NG_SERVER_NAME: $NG_SERVER_NAME"
 	fi
 
-	IRIUS_EXT_URL=$(grep IRIUS_EXT_URL "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_EXT_URL=//;s/"//g' | xargs)
+	IRIUS_EXT_URL=$(grep 'IRIUS_EXT_URL=' "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_EXT_URL=//;s/"//g' | xargs)
 	if [[ -z $IRIUS_EXT_URL || $IRIUS_EXT_URL == *'${HOST_NAME}'* ]]; then
 		msg="WARNING: IRIUS_EXT_URL must be set to a real value in $OVERRIDE_FILE (not left as \${HOST_NAME})"
 		echo "$msg"
@@ -181,7 +183,7 @@ if [[ -n $OVERRIDE_FILE && -f $OVERRIDE_FILE ]]; then
 		echo "IRIUS_EXT_URL: $IRIUS_EXT_URL"
 	fi
 
-	IRIUS_DB_URL=$(grep IRIUS_DB_URL "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_DB_URL=//;s/"//g' | xargs)
+	IRIUS_DB_URL=$(grep 'IRIUS_DB_URL=' "$OVERRIDE_FILE" | head -1 | sed 's/.*IRIUS_DB_URL=//;s/"//g' | xargs)
 	if [[ -z $IRIUS_DB_URL ]]; then
 		msg="WARNING: IRIUS_DB_URL must be set in $OVERRIDE_FILE"
 		echo "$msg"
@@ -196,15 +198,108 @@ if [[ -n $OVERRIDE_FILE && -f $OVERRIDE_FILE ]]; then
 		echo "IRIUS_DB_URL: $IRIUS_DB_URL"
 	fi
 else
-	if [[ -n $OVERRIDE_FILE ]]; then
-		msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"
+	msg="WARNING: $OVERRIDE_FILE not found (required for custom config)"
+	echo "$msg"
+	WARNINGS+=("$msg")
+	POSTGRES_VALUES_FILLED=0
+fi
+
+if [[ $JEFF_ENABLED == "y" ]]; then
+	if [[ -n $JEFF_FILE && -f $JEFF_FILE ]]; then
+		echo "Checking $JEFF_FILE for required Jeff variables and valid values..."
+
+		AZURE_ENDPOINT_VALUE=$(grep 'AZURE_ENDPOINT=' "$JEFF_FILE" | head -1 | sed 's/.*AZURE_ENDPOINT=//;s/"//g' | xargs)
+		if [[ -z $AZURE_ENDPOINT_VALUE || $AZURE_ENDPOINT_VALUE == '${AZURE_ENDPOINT}' ]]; then
+			msg="WARNING: AZURE_ENDPOINT must be set to a real value in $JEFF_FILE when Jeff is enabled"
+			echo "$msg"
+			WARNINGS+=("$msg")
+			JEFF_VALUES_FILLED=0
+		else
+			echo "AZURE_ENDPOINT: $AZURE_ENDPOINT_VALUE"
+		fi
+
+		GEMINI_ENDPOINT_VALUE=$(grep 'GEMINI_API_BASE=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_BASE=//;s/"//g' | xargs)
+		if [[ -z $GEMINI_ENDPOINT_VALUE || $GEMINI_ENDPOINT_VALUE == '${GEMINI_API_BASE}' ]]; then
+			msg="WARNING: GEMINI_API_BASE must be set to a real value in $JEFF_FILE when Jeff is enabled"
+			echo "$msg"
+			WARNINGS+=("$msg")
+			JEFF_VALUES_FILLED=0
+		else
+			echo "GEMINI_API_BASE: $GEMINI_ENDPOINT_VALUE"
+		fi
+
+		if [[ $CONTAINER_ENGINE == "podman" ]]; then
+			AZURE_API_KEY_VALUE="$(read_podman_secret_plaintext azure_api_key azure_api_privkey || true)"
+			GEMINI_API_KEY_VALUE="$(read_podman_secret_plaintext gemini_api_key gemini_api_privkey || true)"
+			REDIS_PASSWORD_VALUE="$(read_podman_secret_plaintext redis_password redis_privkey || true)"
+
+			if [[ -z $AZURE_API_KEY_VALUE ]]; then
+				msg="WARNING: Podman secret 'azure_api_key' must exist and be readable when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "azure_api_key Podman secret is set"
+			fi
+
+			if [[ -z $GEMINI_API_KEY_VALUE ]]; then
+				msg="WARNING: Podman secret 'gemini_api_key' must exist and be readable when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "gemini_api_key Podman secret is set"
+			fi
+
+			if [[ -z $REDIS_PASSWORD_VALUE ]]; then
+				msg="WARNING: Podman secret 'redis_password' must exist and be readable when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "redis_password Podman secret is set"
+			fi
+		else
+			AZURE_API_KEY_VALUE=$(grep 'AZURE_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*AZURE_API_KEY=//;s/"//g' | xargs)
+			if [[ -z $AZURE_API_KEY_VALUE || $AZURE_API_KEY_VALUE == '${AZURE_API_KEY}' ]]; then
+				msg="WARNING: AZURE_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "AZURE_API_KEY is set"
+			fi
+
+			GEMINI_API_KEY_VALUE=$(grep 'GEMINI_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_KEY=//;s/"//g' | xargs)
+			if [[ -z $GEMINI_API_KEY_VALUE || $GEMINI_API_KEY_VALUE == '${GEMINI_API_KEY}' ]]; then
+				msg="WARNING: GEMINI_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "GEMINI_API_KEY is set"
+			fi
+
+			REDIS_PASSWORD_VALUE=$(grep 'REDIS_PASSWORD=' "$JEFF_FILE" | head -1 | sed 's/.*REDIS_PASSWORD=//;s/"//g' | xargs)
+			if [[ -z $REDIS_PASSWORD_VALUE || $REDIS_PASSWORD_VALUE == '${REDIS_PASSWORD}' ]]; then
+				msg="WARNING: REDIS_PASSWORD must be set to a real value in $JEFF_FILE when Jeff is enabled"
+				echo "$msg"
+				WARNINGS+=("$msg")
+				JEFF_VALUES_FILLED=0
+			else
+				echo "REDIS_PASSWORD is set"
+			fi
+		fi
+	else
+		msg="WARNING: $JEFF_FILE not found (required when Jeff is enabled)"
 		echo "$msg"
 		WARNINGS+=("$msg")
+		JEFF_VALUES_FILLED=0
 	fi
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Postgres connectivity check (if applicable)
+# Postgres connectivity check (if applicable)
 # —————————————————————————————————————————————————————————————
 if [[ $POSTGRES_VALUES_FILLED -eq 1 ]]; then
 	if [[ $DB_IP == "postgres" ]]; then
@@ -222,7 +317,19 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 9. Print summary report
+# Jeff connectivity check (if applicable)
+# —————————————————————————————————————————————————————————————
+
+if [[ $JEFF_ENABLED == "y" && $JEFF_VALUES_FILLED -eq 1 ]]; then
+	echo "Checking Azure and Gemini API connectivity..."
+	check_gemini_api "$GEMINI_ENDPOINT_VALUE" "$GEMINI_API_KEY_VALUE"
+	check_azure_endpoint "$AZURE_ENDPOINT_VALUE" "$AZURE_API_KEY_VALUE"
+else
+	echo "Azure/Gemini connectivity checks skipped."
+fi
+
+# —————————————————————————————————————————————————————————————
+# Print summary report
 # —————————————————————————————————————————————————————————————
 echo
 echo "================ Preflight Report ================"

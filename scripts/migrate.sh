@@ -19,7 +19,7 @@ init_logging "$0"
 echo "IriusRisk Migration to Automation Repo"
 echo "---------------------------------------"
 # —————————————————————————————————————————————————————————————
-# 0. Ensure we're in the scripts dir
+# Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_PATH/.." && pwd)"
@@ -28,7 +28,7 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Detect container engine & Postgres option
+# Detect container engine & Postgres option
 # —————————————————————————————————————————————————————————————
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
@@ -43,7 +43,7 @@ fi
 ENABLE_SAML_ONCLICK="n"
 
 # —————————————————————————————————————————————————————————————
-# 2. Locate legacy install (~/docker or ~/podman)
+# Locate legacy install (~/docker or ~/podman)
 # —————————————————————————————————————————————————————————————
 LEGACY_DIR_DEFAULT1="$HOME/docker"
 LEGACY_DIR_DEFAULT2="$HOME/podman"
@@ -72,7 +72,7 @@ echo "Legacy compose: $LEGACY_COMPOSE_FILE"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 3. Pre-migration health/version check (best-effort)
+# Pre-migration health/version check (best-effort)
 #    Saves current version to /tmp/iriusrisk_previous_version.txt
 # —————————————————————————————————————————————————————————————
 PREV_VERSION="unknown"
@@ -88,7 +88,7 @@ echo "Detected current IriusRisk version (pre-migration): $PREV_VERSION"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 4. Backups — reuse shared helper (sets TS, VERSION, BDIR, OUT_DB)
+# Backups — reuse shared helper (sets TS, VERSION, BDIR, OUT_DB)
 # —————————————————————————————————————————————————————————————
 backup_db
 
@@ -105,7 +105,7 @@ echo "Compose backup saved to: $OUT_COMPOSE_TAR"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 5. Parse legacy compose for required values (yq if present; awk fallback)
+# Parse legacy compose for required values (yq if present; awk fallback)
 # —————————————————————————————————————————————————————————————
 FILE="$LEGACY_COMPOSE_FILE"
 have_yq=0
@@ -215,7 +215,7 @@ fi
 echo
 
 # ------------------------------------------------------------
-# 6. Copy certs + SAML files from legacy into the new engine dir
+# Copy certs + SAML files from legacy into the new engine dir
 # ------------------------------------------------------------
 CONTAINER_DIR="$REPO_ROOT/$CONTAINER_ENGINE"
 
@@ -256,7 +256,7 @@ fi
 echo "Copy step completed."
 
 # —————————————————————————————————————————————————————————————
-# 7. Update automation compose overrides with extracted values
+# Update automation compose overrides with extracted values
 # —————————————————————————————————————————————————————————————
 OVR="$CONTAINER_DIR/$CONTAINER_ENGINE-compose.override.yml"
 SAML_OVR="$CONTAINER_DIR/$CONTAINER_ENGINE-compose.saml.yml"
@@ -301,7 +301,7 @@ if [[ $ENABLE_SAML_ONCLICK == "y" && -f $SAML_OVR ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Switch over: stop legacy stack, start new stack, create systemd service
+# Switch over: stop legacy stack, start new stack, create systemd service
 #    Then perform post-migration health wait (≤ 60 minutes)
 # —————————————————————————————————————————————————————————————
 

@@ -8,69 +8,53 @@ echo "IriusRisk On-Premise Interactive Setup Wizard"
 echo "--------------------------------------------"
 
 # —————————————————————————————————————————————————————————————
-# 0. Decide which container engine to use (passed-in or standalone)
+# Decide which container engine to use (passed-in or standalone)
 # —————————————————————————————————————————————————————————————
 prompt_engine
 
 # —————————————————————————————————————————————————————————————
-# 1. Set override paths once, for downstream logic
+# Set override paths once, for downstream logic
 # —————————————————————————————————————————————————————————————
 OVERRIDE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.override.yml"
+JEFF_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.jeff.yml"
 COMPOSE_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.yml"
+POSTGRES_FILE="../$CONTAINER_ENGINE/$CONTAINER_ENGINE-compose.postgres.yml"
 
 # —————————————————————————————————————————————————————————————
-# 2. Prompt for key values (with validation)
+# Prompt for key values (with validation)
 # —————————————————————————————————————————————————————————————
 HOST_NAME=$(prompt_nonempty "Enter the public hostname for your IriusRisk instance (HOST_NAME, e.g. iriusrisk.example.com)")
 
 # Properly escape protocol colon in IRIUS_EXT_URL
 IRIUS_EXT_URL="https\\\\://$HOST_NAME"
 
+prompt_jeff_config
+
 # —————————————————————————————————————————————————————————————
-# 3. Build JDBC_URL
+# Build JDBC_URL
 # —————————————————————————————————————————————————————————————
 
 if [[ $CONTAINER_ENGINE == "docker" ]]; then
-	# Properly escape JDBC URL for YAML
 	JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod&password\\=$DB_PASS"
 elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 	JDBC_URL="jdbc\\:postgresql\\://$DB_IP\\:5432/iriusprod?user\\=iriusprod"
 fi
 
 # —————————————————————————————————————————————————————————————
-# 4. Safely update override file & generate certificates
+# Safely update override file & generate certificates
 # —————————————————————————————————————————————————————————————
 
-if [[ ! -f $OVERRIDE_FILE ]]; then
-	echo "ERROR: $OVERRIDE_FILE not found. Please ensure you have cloned the repo and have the override template."
-	exit 1
+update_base_override_env "$OVERRIDE_FILE" "$HOST_NAME" "$IRIUS_EXT_URL" "$JDBC_URL"
+
+if [[ $JEFF_ENABLED == "y" ]]; then
+	enable_jeff_override_env "$OVERRIDE_FILE"
 fi
 
-# Update NG_SERVER_NAME (replace any occurrence)
-sed -i "s|NG_SERVER_NAME=.*|NG_SERVER_NAME=$HOST_NAME|g" "$OVERRIDE_FILE"
-# Update IRIUS_EXT_URL (replace \${HOST_NAME} or any existing value)
-sed -i "s|IRIUS_EXT_URL=.*|IRIUS_EXT_URL=$IRIUS_EXT_URL|g" "$OVERRIDE_FILE"
-# Remove existing IRIUS_DB_URL line (escaped or not)
-sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_DB_URL=/d' "$OVERRIDE_FILE"
-# Insert a correct line after 'environment:' under tomcat:
-awk -v db_url="      - IRIUS_DB_URL=$JDBC_URL" '
-    BEGIN {tomcat=0}
-    /tomcat:/ {print; tomcat=1; next}
-    tomcat && /environment:/ {
-        print
-        print db_url
-        tomcat=0
-        next
-    }
-    {print}
-' "$OVERRIDE_FILE" >"${OVERRIDE_FILE}.tmp" && mv "${OVERRIDE_FILE}.tmp" "$OVERRIDE_FILE"
-
-echo "Updated $OVERRIDE_FILE"
-
-create_certificates $HOST_NAME
+configure_jeff_file "$JEFF_FILE"
+create_certificates "$HOST_NAME"
 
 # —————————————————————————————————————————————————————————————
-# 6. Summary
+# Summary
 # —————————————————————————————————————————————————————————————
 echo
 echo "--------------------------------------------"
@@ -80,5 +64,8 @@ echo "Host name:             $HOST_NAME"
 echo "Postgres host/IP:      $DB_IP"
 echo "Postgres password:     [set]"
 echo "Override file:         $OVERRIDE_FILE"
+if [[ $JEFF_ENABLED == "y" ]]; then
+	echo "Jeff file:             $JEFF_FILE"
+fi
 echo
 echo "You can rerun this wizard to update your settings anytime."

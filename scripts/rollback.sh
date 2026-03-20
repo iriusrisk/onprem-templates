@@ -41,7 +41,7 @@ echo "IriusRisk Rollback Deployment"
 echo "---------------------------------------"
 
 # —————————————————————————————————————————————————————————————
-# 0. Ensure we're in the scripts dir
+# Ensure we're in the scripts dir
 # —————————————————————————————————————————————————————————————
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_PATH"
@@ -50,7 +50,7 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 1. Set engine and Postgres options
+# Set engine and Postgres options
 # —————————————————————————————————————————————————————————————
 prompt_engine
 COMPOSE_TOOL="$CONTAINER_ENGINE-compose"
@@ -63,10 +63,10 @@ else
 fi
 
 # —————————————————————————————————————————————————————————————
-# 2. Locate backup directory and discover available versions
+# Locate backup directory and discover available versions
 # —————————————————————————————————————————————————————————————
 BDIR="${BDIR:-/home/$USER/irius_backups}"
-OFFLINE_BUNDLE_DIR=$BDIR
+OFFLINE_BUNDLE_DIR="$BDIR"
 
 echo "Looking for backups under: $BDIR"
 [[ -d $BDIR ]] || {
@@ -88,7 +88,8 @@ mapfile -t DB_BACKUPS < <(ls -1t "$BDIR"/irius.db.*.sql.gz 2>/dev/null || true)
 
 # Extract versions and choose a default that exists for BOTH backups
 extract_version() { # e.g. /path/irius.compose.4.46.9.tar.gz -> 4.46.9
-	local n="$(basename "$1")"
+	local n
+	n="$(basename "$1")"
 	printf '%s\n' "$n" | sed -E 's/^irius\.(compose|db)\.([0-9]+(\.[0-9]+){0,2})\..*$/\2/'
 }
 
@@ -102,7 +103,7 @@ for f in "${DB_BACKUPS[@]}"; do
 	[[ -n $v ]] && HAVE_DB["$v"]=1
 done
 
-# Compute intersection, prefer newest by file mtime (driven by ls -t order from compose list, then db list)
+# Compute intersection, prefer newest by file mtime
 CANDIDATES=()
 for f in "${COMPOSE_BACKUPS[@]}"; do
 	v="$(extract_version "$f")"
@@ -110,6 +111,7 @@ for f in "${COMPOSE_BACKUPS[@]}"; do
 		CANDIDATES+=("$v")
 	fi
 done
+
 if [[ ${#CANDIDATES[@]} -eq 0 ]]; then
 	echo "ERROR: Found compose and DB backups, but no matching versions between them."
 	echo "Compose backups:"
@@ -142,11 +144,16 @@ echo "  DB     : $DB_DUMP"
 echo
 
 # —————————————————————————————————————————————————————————————
-# 3. Compute compose context and stop the stack cleanly
+# Compute compose context and stop the stack cleanly
 # —————————————————————————————————————————————————————————————
-COMPOSE_OVERRIDE=$(build_compose_override "$USE_INTERNAL_PG")
 COMPOSE_DIR="$SCRIPT_PATH/../$CONTAINER_ENGINE"
 COMPOSE_YML="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.yml"
+OVERRIDE_FILE="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.override.yml"
+JEFF_FILE="$COMPOSE_DIR/$CONTAINER_ENGINE-compose.jeff.yml"
+
+SAML_ENABLED="n"
+JEFF_ENABLED="n"
+export JEFF_ENABLED
 
 echo "Using compose dir: $COMPOSE_DIR"
 [[ -d $COMPOSE_DIR ]] || {
@@ -157,19 +164,80 @@ echo "Using compose dir: $COMPOSE_DIR"
 
 cd "$COMPOSE_DIR"
 
+# Detect CURRENT deployment flags so we can shut down the currently running stack correctly
+PRE_SAML_ENABLED="n"
+PRE_JEFF_ENABLED="n"
+
+if saml_files_exist; then
+	PRE_SAML_ENABLED="y"
+fi
+
+if detect_jeff_enabled "$OVERRIDE_FILE"; then
+	PRE_JEFF_ENABLED="y"
+fi
+
+JEFF_ENABLED="$PRE_JEFF_ENABLED"
+export JEFF_ENABLED
+
+PRE_RESTORE_COMPOSE_OVERRIDE="$(build_compose_override "$PRE_SAML_ENABLED" "$USE_INTERNAL_PG")"
+
 echo "Stopping current stack ..."
-$COMPOSE_TOOL $COMPOSE_OVERRIDE down
+$COMPOSE_TOOL $PRE_RESTORE_COMPOSE_OVERRIDE down
 
 # —————————————————————————————————————————————————————————————
-# 4. Restore compose files from backup
+# Restore compose files from backup
 # —————————————————————————————————————————————————————————————
 echo "Restoring compose files from $COMPOSE_TAR -> $COMPOSE_DIR"
 tar -xzf "$COMPOSE_TAR" -C "$COMPOSE_DIR"
 echo "Compose restore complete."
+
+case "$CONTAINER_ENGINE" in
+	docker)
+		UNIT_PATH="/etc/systemd/system/iriusrisk-docker.service"
+		UNIT_BACKUP="$BDIR/iriusrisk-docker.service.pre-upgrade.bak"
+		if [[ -f $UNIT_BACKUP ]]; then
+			sudo cp "$UNIT_BACKUP" "$UNIT_PATH"
+			sudo systemctl daemon-reload
+			echo "Restored service unit from backup: $UNIT_BACKUP -> $UNIT_PATH"
+		else
+			echo "WARNING: No service unit backup found at $UNIT_BACKUP; leaving current unit unchanged."
+		fi
+		;;
+	podman)
+		UNIT_PATH="$HOME/.config/systemd/user/iriusrisk-podman.service"
+		UNIT_BACKUP="$BDIR/iriusrisk-podman.service.pre-upgrade.bak"
+		if [[ -f $UNIT_BACKUP ]]; then
+			cp "$UNIT_BACKUP" "$UNIT_PATH"
+			systemctl --user daemon-reload
+			echo "Restored service unit from backup: $UNIT_BACKUP -> $UNIT_PATH"
+		else
+			echo "WARNING: No service unit backup found at $UNIT_BACKUP; leaving current unit unchanged."
+		fi
+		;;
+	*)
+		echo "ERROR: Unsupported engine: $CONTAINER_ENGINE" >&2
+		exit 1
+		;;
+esac
 echo
 
+# Recompute flags from RESTORED files so subsequent compose operations target the rollback version correctly
+SAML_ENABLED="n"
+JEFF_ENABLED="n"
+
+if saml_files_exist; then
+	SAML_ENABLED="y"
+fi
+
+if detect_jeff_enabled "$OVERRIDE_FILE"; then
+	JEFF_ENABLED="y"
+fi
+export JEFF_ENABLED
+
+COMPOSE_OVERRIDE="$(build_compose_override "$SAML_ENABLED" "$USE_INTERNAL_PG")"
+
 # —————————————————————————————————————————————————————————————
-# 5. Ensure DB service available for restore
+# Ensure DB service available for restore
 # —————————————————————————————————————————————————————————————
 if [[ $USE_INTERNAL_PG == "y" ]]; then
 	echo "Starting internal Postgres for restore ..."
@@ -192,7 +260,7 @@ fi
 echo
 
 # —————————————————————————————————————————————————————————————
-# 6. Restore database
+# Restore database
 # —————————————————————————————————————————————————————————————
 echo "Restoring database from $DB_DUMP ..."
 if [[ $USE_INTERNAL_PG == "y" ]]; then
@@ -215,11 +283,10 @@ echo "Database restore complete."
 echo
 
 # —————————————————————————————————————————————————————————————
-# 7. Rebuild local custom images for podman based on rollback version
+# Rebuild local custom images for podman based on rollback version
 # —————————————————————————————————————————————————————————————
 if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 	# Try to derive version from the chosen backup filenames
-	# First look at compose tar name, then DB dump name
 	NAME_VER=""
 	for candidate in "$COMPOSE_TAR" "$DB_DUMP"; do
 		b="$(basename "$candidate")"
@@ -229,13 +296,12 @@ if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 		fi
 	done
 
-	# Prefer existing CHOSEN_VERSION (if set earlier), else pick from filename, else prompt
+	# Prefer existing CHOSEN_VERSION, else pick from filename, else prompt
 	if [[ -z ${CHOSEN_VERSION:-} ]]; then
 		CHOSEN_VERSION="$NAME_VER"
 	fi
 
 	if [[ -z $CHOSEN_VERSION ]]; then
-		# No version embedded in filenames; ask the user
 		read -r -p "Version to rebuild custom Podman images (e.g., 4 or 4.46.9): " CHOSEN_VERSION
 		if [[ -z $CHOSEN_VERSION ]]; then
 			echo "ERROR: A version is required to rebuild custom images for Podman." >&2
@@ -251,7 +317,7 @@ if [[ $CONTAINER_ENGINE == "podman" && $OFFLINE -eq 0 ]]; then
 fi
 
 # —————————————————————————————————————————————————————————————
-# 8. Pull images referenced by restored compose and restart full stack
+# Pull images referenced by restored compose and restart full stack
 # —————————————————————————————————————————————————————————————
 echo "Cleaning up current stack and loading rollback images"
 $CONTAINER_ENGINE system prune -f

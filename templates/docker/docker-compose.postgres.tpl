@@ -3,22 +3,15 @@ networks:
   iriusrisk-backend:
 services:
   postgres:
-    image: localhost/postgres-gpg:15.4
+    image: ${POSTGRES_IMAGE}
     container_name: iriusrisk-postgres
     ports:
       - "5432:5432"
-    secrets:
-      - db_pwd
-      - db_privkey
     environment:
       POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     networks:
       - iriusrisk-backend
     volumes:
       - "./postgres/data:/var/lib/postgresql/data:z"
-    
-secrets:
-  db_pwd:
-    external: true
-  db_privkey:
-    external: true
+    restart: always

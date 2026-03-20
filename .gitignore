@@ -12,3 +12,13 @@ logs/
 
 # Ignore .env
 .env
+
+#Ignore generated compose files
+docker/docker-compose.override.yml
+docker/docker-compose.jeff.yml
+docker/docker-compose.postgres.yml
+docker/docker-compose.yml
+podman/podman-compose.override.yml
+podman/podman-compose.jeff.yml
+podman/podman-compose.postgres.yml
+podman/podman-compose.yml

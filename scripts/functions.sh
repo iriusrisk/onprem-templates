@@ -72,11 +72,36 @@ function prompt_postgres_option() {
 : "${REGISTRY_URL:=docker.io}"
 : "${REGISTRY_NAMESPACE:=continuumsecurity/iriusrisk-prod}"
 : "${REGISTRY_USERNAME:=iriusrisk}"
-: "${POSTGRES_BASE_IMAGE:=docker.io/library/postgres:15.4}"
+: "${POSTGRES_DEFAULT_IMAGE:=docker.io/library/postgres:15.4}"
+: "${REDIS_DEFAULT_IMAGE:=docker.io/redis/redis-stack:latest}"
+: "${POSTGRES_BASE_IMAGE:=}"
+: "${REDIS_BASE_IMAGE:=}"
 
 function image_ref() {
 	local tag="$1"
 	echo "${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${tag}"
+}
+
+function postgres_image_ref() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		echo "${POSTGRES_DEFAULT_IMAGE:-docker.io/library/postgres:15.4}"
+	else
+		echo "${REGISTRY_URL}/${REGISTRY_NAMESPACE}:postgres-15.4"
+	fi
+}
+
+function redis_image_ref() {
+	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
+		echo "${REDIS_DEFAULT_IMAGE:-docker.io/redis/redis-stack:latest}"
+	else
+		echo "${REGISTRY_URL}/${REGISTRY_NAMESPACE}:redis-stack-latest"
+	fi
+}
+
+function refresh_base_images() {
+	POSTGRES_BASE_IMAGE="$(postgres_image_ref)"
+	REDIS_BASE_IMAGE="$(redis_image_ref)"
+	export POSTGRES_BASE_IMAGE REDIS_BASE_IMAGE
 }
 
 function prompt_registry_settings() {
@@ -104,6 +129,7 @@ function prompt_registry_settings() {
 				REGISTRY_URL=$(prompt_nonempty "Enter registry URL")
 				REGISTRY_NAMESPACE=$(prompt_nonempty "Enter image repository path (e.g. myteam/iriusrisk-prod)")
 				REGISTRY_USERNAME=$(prompt_nonempty "Enter registry username")
+				container_registry_login
 				break
 				;;
 			*)
@@ -112,45 +138,14 @@ function prompt_registry_settings() {
 		esac
 	done
 
-	export REGISTRY_URL REGISTRY_NAMESPACE REGISTRY_USERNAME
+	refresh_base_images
+	export REGISTRY_URL REGISTRY_NAMESPACE REGISTRY_USERNAME POSTGRES_BASE_IMAGE REDIS_BASE_IMAGE
 }
 
 function prompt_registry_password() {
 	local registry_user="${REGISTRY_USERNAME:-iriusrisk}"
 	read -srp "Enter the container registry password for user '${registry_user}': " REGISTRY_PASS
 	echo
-}
-
-function prompt_postgres_image_source() {
-	if [[ ${REGISTRY_URL:-docker.io} == "docker.io" && ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} == "continuumsecurity/iriusrisk-prod" ]]; then
-		POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
-		export POSTGRES_BASE_IMAGE
-		echo "Using default PostgreSQL base image: $POSTGRES_BASE_IMAGE"
-		return 0
-	fi
-
-	echo "PostgreSQL base image source:"
-	echo "  1) Default public image (docker.io/library/postgres:15.4)"
-	echo "  2) Custom image"
-
-	while true; do
-		read -rp "Enter 1 or 2: " pg_img_option
-		case "$pg_img_option" in
-			1)
-				POSTGRES_BASE_IMAGE="docker.io/library/postgres:15.4"
-				break
-				;;
-			2)
-				POSTGRES_BASE_IMAGE=$(prompt_nonempty "Enter PostgreSQL base image reference")
-				break
-				;;
-			*)
-				echo "Invalid input: '$pg_img_option'. Please enter 1 or 2."
-				;;
-		esac
-	done
-
-	export POSTGRES_BASE_IMAGE
 }
 
 function prompt_for_docker_user() {
@@ -344,12 +339,10 @@ function install_and_configure_postgres() {
 		sg docker -c "$compose_tool -f $(basename "$postgres_file") up -d postgres"
 	elif [[ $CONTAINER_ENGINE == "podman" ]]; then
 		local compose_tool="podman-compose"
-		local patched_image="localhost/postgres-gpg:15.4"
-		local tmp_name="temp-postgres"
 		local base_image
 
 		if [[ $OFFLINE -eq 0 ]]; then
-			prompt_postgres_image_source
+			refresh_base_images
 		fi
 		base_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
 
@@ -360,44 +353,7 @@ function install_and_configure_postgres() {
 		encrypt_and_store_secret "$DB_PASS" "db_pwd" "db_privkey"
 
 		if [[ $OFFLINE -eq 0 ]]; then
-			podman rm -f "$tmp_name" 2>/dev/null || true
-
-			podman run \
-				--name "$tmp_name" \
-				--user root \
-				--entrypoint /bin/sh \
-				"$base_image" \
-				-c "\
-            set -eu; \
-            # install gnupg
-            if [ -f /etc/alpine-release ]; then \
-                apk add --no-cache gnupg; \
-            else \
-                apt-get update && \
-                apt-get install -y --no-install-recommends gnupg && \
-                rm -rf /var/lib/apt/lists/*; \
-            fi; \
-            # write our expand-db-url script
-            cat << 'EOF' > /usr/local/bin/pg-expand-secret.sh
-#!/usr/bin/env sh
-set -eu
-# Import the private key and decrypt the DB password
-gpg --batch --import /run/secrets/db_privkey
-DECRYPTED=\$(gpg --batch --yes --decrypt /run/secrets/db_pwd)
-
-# Append it to the URL and hand off to the real entrypoint
-export POSTGRES_PASSWORD=\"\${DECRYPTED}\"
-exec docker-entrypoint.sh \"\$@\"
-EOF
-        chmod +x /usr/local/bin/pg-expand-secret.sh; \
-"
-
-			podman commit \
-				--change='ENTRYPOINT ["/usr/local/bin/pg-expand-secret.sh"]' \
-				--change='CMD ["postgres"]' \
-				"$tmp_name" "$patched_image"
-
-			podman rm "$tmp_name"
+			build_podman_secret_image "$base_image" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' 'docker-entrypoint.sh "$@"'
 		fi
 
 		# --- Graceful down then hard teardown for a clean slate ---
@@ -427,7 +383,7 @@ EOF
 	while true; do
 		if [[ $CONTAINER_ENGINE == "docker" ]]; then
 			# Use sg docker -c to ensure group permissions are applied
-			if sg docker -c "docker exec iriusrisk-postgres pg_isready -U \"$PG_SUPERUSER\"" >/dev/null 2>&1; then
+			if sg docker -c "docker exec iriusrisk-postgres pg_isready -U "$PG_SUPERUSER"" >/dev/null 2>&1; then
 				break
 			fi
 		else
@@ -690,20 +646,30 @@ function check_file() {
 }
 
 function build_compose_override() {
-	local enable_saml use_internal_pg
-	enable_saml="${1:-}"
-	use_internal_pg="${2:-}"
+	local enable_saml=""
+	local use_internal_pg=""
+	local enable_jeff="${JEFF_ENABLED:-n}"
+
+	case $# in
+		0) ;;
+		1)
+			# Back-compat: a single argument means the internal Postgres flag.
+			use_internal_pg="$1"
+			;;
+		2)
+			enable_saml="$1"
+			use_internal_pg="$2"
+			;;
+		*)
+			enable_saml="$1"
+			use_internal_pg="$2"
+			enable_jeff="$3"
+			;;
+	esac
 
 	local base_files="-f $CONTAINER_ENGINE-compose.yml -f $CONTAINER_ENGINE-compose.override.yml"
 	local files="$base_files"
 
-	# If only one arg is provided, interpret it as the Postgres flag (back-compat)
-	if [[ -z $use_internal_pg && -n $enable_saml ]]; then
-		use_internal_pg="$enable_saml"
-		enable_saml=""
-	fi
-
-	# Normalize and include optional overrides
 	shopt -s nocasematch
 	case "$enable_saml" in
 		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.saml.yml" ;;
@@ -711,9 +677,155 @@ function build_compose_override() {
 	case "$use_internal_pg" in
 		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.postgres.yml" ;;
 	esac
+	case "$enable_jeff" in
+		y | yes | true | 1) files="$files -f $CONTAINER_ENGINE-compose.jeff.yml" ;;
+	esac
 	shopt -u nocasematch
 
 	echo "$files"
+}
+
+function podman_secret_to_env_snippet() {
+	local var_name="$1"
+	local cipher_env="$2"
+	local priv_env="$3"
+	printf 'export_from_secret_env %s %s %s' "$var_name" "$cipher_env" "$priv_env"
+}
+
+function build_podman_secret_image() {
+	local base_image="$1"
+	local tmp_name="$2"
+	local target_image="$3"
+	local secret_snippet="${4:-}"
+	local final_exec="${5:-}"
+	local setup_snippet="${6:-}"
+	local run_as_user="${7:-}"
+	local commit_cmd="${8:-}"
+	local wrapper_file final_exec_file
+
+	local original_entrypoint_json original_cmd_json original_entrypoint_exec original_user
+
+	original_entrypoint_json="$(podman image inspect --format '{{json .Config.Entrypoint}}' "$base_image" 2>/dev/null || echo null)"
+	original_cmd_json="$(podman image inspect --format '{{json .Config.Cmd}}' "$base_image" 2>/dev/null || echo null)"
+	original_user="$(podman image inspect --format '{{.Config.User}}' "$base_image" 2>/dev/null || true)"
+
+	if command -v python3 >/dev/null 2>&1; then
+		original_entrypoint_exec="$(
+			python3 - "$original_entrypoint_json" <<'PY2'
+import json, shlex, sys
+raw = sys.argv[1]
+if raw in ('', 'null', 'None'):
+    print('')
+else:
+    arr = json.loads(raw)
+    print(' '.join(shlex.quote(str(x)) for x in arr))
+PY2
+		)"
+	else
+		echo "ERROR: python3 is required to inspect and preserve Podman image entrypoints." >&2
+		return 1
+	fi
+
+	wrapper_file="$(mktemp)"
+	cat >"$wrapper_file" <<EOF
+#!/usr/bin/env sh
+set -eu
+
+export_from_secret_env() {
+  var_name="\$1"
+  cipher_env="\$2"
+  priv_env="\$3"
+
+  cipher_value="\$(printenv "\$cipher_env" 2>/dev/null || true)"
+  priv_value="\$(printenv "\$priv_env" 2>/dev/null || true)"
+
+  if [ -n "\$cipher_value" ] && [ -n "\$priv_value" ]; then
+    tmpdir="\$(mktemp -d)"
+    cipher_file="\$tmpdir/cipher.gpg"
+    priv_file="\$tmpdir/private.asc"
+
+    printf '%s' "\$cipher_value" >"\$cipher_file"
+    printf '%s' "\$priv_value" >"\$priv_file"
+
+    gpg --batch --import "\$priv_file" >/dev/null 2>&1 || true
+    value="\$(gpg --batch --yes --decrypt "\$cipher_file" 2>/dev/null || true)"
+
+    rm -rf "\$tmpdir"
+
+    if [ -n "\$value" ]; then
+      export "\$var_name=\$value"
+    fi
+  fi
+}
+
+${secret_snippet}
+EOF
+
+	if [[ -n $final_exec ]]; then
+		cat >>"$wrapper_file" <<'EOF'
+
+if [ -r /usr/local/bin/podman-secret-final-exec ]; then
+  exec /bin/sh -c "$(cat /usr/local/bin/podman-secret-final-exec)" -- "$@"
+fi
+EOF
+	elif [[ -n $original_entrypoint_exec ]]; then
+		printf '\nexec %s "$@"\n' "$original_entrypoint_exec" >>"$wrapper_file"
+	else
+		printf '\nexec "$@"\n' >>"$wrapper_file"
+	fi
+
+	podman rm -f "$tmp_name" 2>/dev/null || true
+	podman create \
+		--name "$tmp_name" \
+		--user root \
+		--entrypoint /bin/sh \
+		"$base_image" \
+		-c 'sleep infinity' >/dev/null
+	podman start "$tmp_name" >/dev/null
+
+	podman exec "$tmp_name" /bin/sh -c "set -eu; \
+		if [ -f /etc/alpine-release ]; then \
+			apk add --no-cache gnupg python3; \
+		else \
+			apt-get update && \
+			apt-get install -y --no-install-recommends gnupg python3 && \
+			rm -rf /var/lib/apt/lists/*; \
+		fi; \
+		${setup_snippet:-:}; \
+		mkdir -p /usr/local/bin"
+
+	podman cp "$wrapper_file" "$tmp_name:/usr/local/bin/podman-secret-wrapper.sh"
+
+	if [[ -n $final_exec ]]; then
+		final_exec_file="$(mktemp)"
+		printf '%s\n' "$final_exec" >"$final_exec_file"
+		podman cp "$final_exec_file" "$tmp_name:/usr/local/bin/podman-secret-final-exec"
+		podman exec "$tmp_name" chmod 755 /usr/local/bin/podman-secret-final-exec
+		rm -f "$final_exec_file"
+	fi
+
+	podman exec "$tmp_name" chmod 755 /usr/local/bin/podman-secret-wrapper.sh
+	podman stop "$tmp_name" >/dev/null
+	rm -f "$wrapper_file"
+
+	local commit_args=(--change='ENTRYPOINT ["/usr/local/bin/podman-secret-wrapper.sh"]')
+
+	if [[ -n $run_as_user ]]; then
+		commit_args+=(--change="USER ${run_as_user}")
+	elif [[ -n $original_user && $original_user != "<no value>" ]]; then
+		commit_args+=(--change="USER ${original_user}")
+	fi
+
+	if [[ $original_cmd_json != "null" && -n $original_cmd_json ]]; then
+		commit_args+=(--change="CMD ${original_cmd_json}")
+	fi
+
+	if [[ -n $commit_cmd ]]; then
+		commit_args+=(--change="CMD ${commit_cmd}")
+	fi
+
+	podman commit "${commit_args[@]}" "$tmp_name" "$target_image" >/dev/null
+	podman rm -f "$tmp_name" >/dev/null || true
 }
 
 # Build/refresh custom podman images used by podman-compose.yml
@@ -724,13 +836,18 @@ function build_podman_custom_images() {
 
 	echo "Preparing custom images for version: tomcat-${tv}"
 
-	# Clean any temp containers
-	podman rm -f temp-nginx temp-tomcat 2>/dev/null || true
-
-	local nginx_image
-	local tomcat_image
+	local nginx_image tomcat_image postgres_image jeff_image rag_image ash_image haven_image redis_image
+	refresh_base_images
 	nginx_image="$(image_ref "nginx")"
 	tomcat_image="$(image_ref "tomcat-${tv}")"
+	postgres_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
+	jeff_image="$(image_ref "ai-jeff-4.6.2")"
+	rag_image="$(image_ref "ai-rag-1.2.2")"
+	ash_image="$(image_ref "ai-ash-1.7.0")"
+	haven_image="$(image_ref "ai-haven-1.0.1")"
+	redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
+
+	podman rm -f temp-nginx temp-tomcat temp-postgres temp-jeff temp-rag temp-ash temp-haven temp-redis 2>/dev/null || true
 
 	if [ "$OFFLINE" -eq 0 ]; then
 		echo "Pulling base images..."
@@ -739,76 +856,60 @@ function build_podman_custom_images() {
 			echo "ERROR: Unable to pull $tomcat_image" >&2
 			return 1
 		}
+		podman pull "$postgres_image" >/dev/null
+		if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+			podman pull "$jeff_image" >/dev/null
+			podman pull "$rag_image" >/dev/null
+			podman pull "$ash_image" >/dev/null
+			podman pull "$haven_image" >/dev/null
+			podman pull "$redis_image" >/dev/null
+		fi
 	fi
 
 	echo "Customizing nginx → localhost/nginx-rhel"
-	podman run --name temp-nginx --user root --entrypoint /bin/sh "$nginx_image" \
-		-c "set -eu; \
-        if [ -f /etc/alpine-release ]; then apk add --no-cache libcap; else \
-            (apt-get update && apt-get install -y --no-install-recommends libcap2-bin) || true; fi; \
-        command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx || true; \
-        sleep 1"
-	podman commit \
-		--change='USER nginx' \
-		--change='ENTRYPOINT ["nginx", "-g", "daemon off;"]' \
-		temp-nginx \
-		localhost/nginx-rhel >/dev/null
-	podman rm -f temp-nginx >/dev/null || true
+	build_podman_secret_image "$nginx_image" "temp-nginx" "localhost/nginx-rhel" "" 'nginx -g "daemon off;"' 'if [ -f /etc/alpine-release ]; then
+		   apk add --no-cache libcap;
+		 else
+		   (apt-get update && apt-get install -y --no-install-recommends libcap2-bin && rm -rf /var/lib/apt/lists/*) || true;
+		 fi;
+		 command -v setcap >/dev/null 2>&1 && setcap "cap_net_bind_service=+ep" /usr/sbin/nginx || true' "nginx"
 
 	echo "Customizing tomcat (base tomcat-${tv}) → localhost/tomcat-rhel"
-	podman run \
-		--name temp-tomcat \
-		--user root \
-		--entrypoint /bin/sh \
-		"$tomcat_image" \
-		-c '\
-      set -eu; \
-      if [ -f /etc/alpine-release ]; then \
-          apk add --no-cache gnupg; \
-      else \
-          apt-get update && \
-          apt-get install -y --no-install-recommends gnupg && \
-          rm -rf /var/lib/apt/lists/*; \
-      fi; \
-      cat <<'"'"'EOF'"'"' > /usr/local/bin/expand-secrets.sh
-#!/usr/bin/env sh
-set -eu
-
-export_from_secret() {
-  var_name="$1"; cipher="$2"; priv="$3"
-  if [ -r "$cipher" ] && [ -r "$priv" ]; then
-    gpg --batch --import "$priv" >/dev/null 2>&1 || true
-    value="$(gpg --batch --yes --decrypt "$cipher" 2>/dev/null || true)"
-    if [ -n "$value" ]; then
-      export "$var_name=$value"
-    fi
-  fi
-}
-
-if [ -r /run/secrets/db_pwd ] && [ -r /run/secrets/db_privkey ]; then
-  gpg --batch --import /run/secrets/db_privkey >/dev/null 2>&1 || true
-  if dec="$(gpg --batch --yes --decrypt /run/secrets/db_pwd 2>/dev/null || true)"; then
-    if [ -n "$dec" ]; then
-      export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"
-    fi
+	build_podman_secret_image "$tomcat_image" "temp-tomcat" "localhost/tomcat-rhel" $'if [ -n "$(printenv DB_PWD_GPG 2>/dev/null || true)" ] && [ -n "$(printenv DB_PRIVKEY_ASC 2>/dev/null || true)" ]; then
+  tmpdir="$(mktemp -d)"
+  cipher_file="$tmpdir/db_pwd.gpg"
+  priv_file="$tmpdir/db_privkey.asc"
+  printf '%s' "$DB_PWD_GPG" >"$cipher_file"
+  printf '%s' "$DB_PRIVKEY_ASC" >"$priv_file"
+  gpg --batch --import "$priv_file" >/dev/null 2>&1 || true
+  dec="$(gpg --batch --yes --decrypt "$cipher_file" 2>/dev/null || true)"
+  rm -rf "$tmpdir"
+  if [ -n "$dec" ]; then
+    export IRIUS_DB_URL="${IRIUS_DB_URL}&password=${dec}"
   fi
 fi
+export_from_secret_env KEYSTORE_PASSWORD KEYSTORE_PWD_GPG KEYSTORE_PRIVKEY_ASC
+export_from_secret_env KEY_ALIAS_PASSWORD KEY_ALIAS_PWD_GPG KEY_ALIAS_PRIVKEY_ASC' '/entrypoint/dynamic-entrypoint.sh "$@"' "" "tomcat"
 
-export_from_secret KEYSTORE_PASSWORD   /run/secrets/keystore_pwd   /run/secrets/keystore_privkey
-export_from_secret KEY_ALIAS_PASSWORD  /run/secrets/key_alias_pwd  /run/secrets/key_alias_privkey
+	echo "Customizing postgres → localhost/postgres-gpg:15.4"
+	build_podman_secret_image "$postgres_image" "temp-postgres" "localhost/postgres-gpg:15.4" 'export_from_secret_env POSTGRES_PASSWORD DB_PWD_GPG DB_PRIVKEY_ASC' 'docker-entrypoint.sh "$@"'
 
-exec /entrypoint/dynamic-entrypoint.sh "$@"
-EOF
-      chmod +x /usr/local/bin/expand-secrets.sh; \
-    '
-	podman commit \
-		--change='USER tomcat' \
-		--change='ENTRYPOINT ["/usr/local/bin/expand-secrets.sh"]' \
-		temp-tomcat \
-		localhost/tomcat-rhel >/dev/null
-	podman rm -f temp-tomcat >/dev/null || true
+	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		echo "Customizing Jeff-related images with Podman secrets"
+		build_podman_secret_image "$jeff_image" "temp-jeff" "localhost/ai-jeff-4.6.2" "$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
-	echo "Custom images ready: localhost/nginx-rhel, localhost/tomcat-rhel"
+		build_podman_secret_image "$rag_image" "temp-rag" "localhost/ai-rag-1.2.2" "$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
+
+		build_podman_secret_image "$ash_image" "temp-ash" "localhost/ai-ash-1.7.0" $'export_from_secret_env GEMINI_API_KEY GEMINI_API_KEY_GPG GEMINI_API_PRIVKEY_ASC
+export_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC'
+
+		build_podman_secret_image "$haven_image" "temp-haven" "localhost/ai-haven-1.0.1" $'export_from_secret_env AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
+export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC'
+
+		build_podman_secret_image "$redis_image" "temp-redis" "localhost/redis-stack-gpg:latest" 'export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC' 'redis-stack-server --requirepass "$REDIS_PASSWORD"'
+	fi
+
+	echo "Custom images ready for Podman deployment"
 }
 
 # Rootless Podman prerequisites + per-boot runtime hardening
@@ -1023,14 +1124,21 @@ function encrypt_and_store_secret() {
 	local secret_value="$1"
 	local secret_name="$2"
 	local privkey_secret_name="$3"
+
+	if [[ -z $secret_name || -z $privkey_secret_name ]]; then
+		echo "encrypt_and_store_secret: missing secret name(s)" >&2
+		return 1
+	fi
+
 	local uid="${secret_name}@iriusrisk.local"
+	local homedir batch enc_file priv_file plaintext_file fp
+	homedir="$(mktemp -d "/tmp/${secret_name}.gnupg.XXXXXX")" || return 1
+	chmod 700 "$homedir" || {
+		rm -rf "$homedir"
+		return 1
+	}
 
-	# Make an isolated, temporary GNUPGHOME so we don't touch the user's keyring
-	local homedir="$(mktemp -d "/tmp/${secret_name}.gnupg.XXXX")"
-	chmod 700 "$homedir"
-
-	# Batch file with %no-protection to avoid pinentry entirely
-	local batch="$homedir/gpg_batch"
+	batch="$homedir/gpg_batch"
 	cat >"$batch" <<EOF
 %no-protection
 Key-Type: RSA
@@ -1041,56 +1149,186 @@ Name-Email: ${uid}
 Expire-Date: 0
 EOF
 
-	# Create the key (no passphrase, no pinentry needed)
-	gpg --homedir "$homedir" --batch --generate-key "$batch"
+	if ! gpg --homedir "$homedir" --batch --generate-key "$batch" >/dev/null 2>&1; then
+		rm -f "$batch"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to generate GPG key" >&2
+		return 1
+	fi
 	rm -f "$batch"
 
-	# Get fingerprint for the new key
-	local fp
-	fp="$(gpg --homedir "$homedir" --list-keys --with-colons "$uid" | awk -F: '/^pub/ {print $5; exit}')"
+	fp="$(
+		gpg --homedir "$homedir" --list-keys --with-colons "$uid" 2>/dev/null |
+			awk -F: '/^fpr:/ {print $10; exit}'
+	)"
+	if [[ -z $fp ]]; then
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to determine key fingerprint" >&2
+		return 1
+	fi
 
-	# Encrypt the secret value to this key
-	local enc_file="$(mktemp "/tmp/${secret_name}.XXXX.gpg")"
-	local priv_file="$(mktemp "/tmp/${secret_name}_privkey.XXXX.asc")"
+	plaintext_file="$(mktemp "/tmp/${secret_name}.plaintext.XXXXXX")" || {
+		rm -rf "$homedir"
+		return 1
+	}
+	enc_file="$(mktemp "/tmp/${secret_name}.enc.XXXXXX.gpg")" || {
+		rm -f "$plaintext_file"
+		rm -rf "$homedir"
+		return 1
+	}
+	priv_file="$(mktemp "/tmp/${secret_name}_privkey.XXXXXX.asc")" || {
+		rm -f "$plaintext_file" "$enc_file"
+		rm -rf "$homedir"
+		return 1
+	}
 
-	echo "$secret_value" |
-		gpg --homedir "$homedir" --batch --yes --encrypt --recipient "$fp" --output "$enc_file"
+	# Preserve the exact secret bytes except Bash cannot carry NUL bytes in variables.
+	printf '%s' "$secret_value" >"$plaintext_file"
 
-	# Export the private key (ASCII-armored)
-	gpg --homedir "$homedir" --batch --yes --export-secret-keys --armor "$fp" >"$priv_file"
+	if ! gpg --homedir "$homedir" --batch --yes \
+		--armor \
+		--trust-model always \
+		--recipient "$fp" \
+		--output "$enc_file" \
+		--encrypt "$plaintext_file" >/dev/null 2>&1; then
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to encrypt secret" >&2
+		return 1
+	fi
 
-	# Store in Podman secrets: <name> (encrypted payload) and <name>_privkey (private key)
-	podman secret rm "${secret_name}" "${privkey_secret_name}" 2>/dev/null || true
-	podman secret create --replace "${secret_name}" "$enc_file"
-	podman secret create --replace "${privkey_secret_name}" "$priv_file"
+	if ! gpg --homedir "$homedir" --batch --yes \
+		--armor --export-secret-keys "$fp" >"$priv_file" 2>/dev/null; then
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to export private key" >&2
+		return 1
+	fi
 
-	# Cleanup artifacts and the whole temporary keyring
-	rm -f "$enc_file" "$priv_file"
+	# Remove any existing versions first. Ignore failures.
+	podman secret rm "$secret_name" "$privkey_secret_name" >/dev/null 2>&1 || true
+
+	if ! podman secret create --replace "$secret_name" "$enc_file" >/dev/null; then
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to create podman secret $secret_name" >&2
+		return 1
+	fi
+
+	if ! podman secret create --replace "$privkey_secret_name" "$priv_file" >/dev/null; then
+		podman secret rm "$secret_name" >/dev/null 2>&1 || true
+		rm -f "$plaintext_file" "$enc_file" "$priv_file"
+		rm -rf "$homedir"
+		echo "encrypt_and_store_secret: failed to create podman secret $privkey_secret_name" >&2
+		return 1
+	fi
+
+	rm -f "$plaintext_file" "$enc_file" "$priv_file"
 	rm -rf "$homedir"
+	return 0
+}
+
+function read_podman_secret_plaintext() {
+	local secret_name="$1"
+	local privkey_secret_name="$2"
+
+	if [[ -z $secret_name || -z $privkey_secret_name ]]; then
+		echo "read_podman_secret_plaintext: missing secret name(s)" >&2
+		return 1
+	fi
+
+	if ! command -v gpg >/dev/null 2>&1; then
+		echo "read_podman_secret_plaintext: gpg is required" >&2
+		return 1
+	fi
+
+	local probe_image="localhost/postgres-gpg:15.4"
+	if ! podman image exists "$probe_image" >/dev/null 2>&1; then
+		probe_image="docker.io/library/postgres:15.4"
+	fi
+
+	local tmpdir gnupghome enc_file key_file plaintext_file
+	tmpdir="$(mktemp -d "/tmp/${secret_name}.read.XXXXXX")" || return 1
+	gnupghome="$tmpdir/gnupg"
+	enc_file="$tmpdir/secret.gpg"
+	key_file="$tmpdir/private.asc"
+	plaintext_file="$tmpdir/plaintext"
+
+	mkdir -m 700 "$gnupghome" || {
+		rm -rf "$tmpdir"
+		return 1
+	}
+
+	# Read the encrypted payload from the podman secret into a file.
+	if ! podman run --rm --entrypoint /bin/sh \
+		--secret "$secret_name" \
+		"$probe_image" \
+		-c "cat '/run/secrets/$secret_name'" >"$enc_file" 2>/dev/null; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to read encrypted secret $secret_name" >&2
+		return 1
+	fi
+
+	# Read the armored private key from the companion secret into a file.
+	if ! podman run --rm --entrypoint /bin/sh \
+		--secret "$privkey_secret_name" \
+		"$probe_image" \
+		-c "cat '/run/secrets/$privkey_secret_name'" >"$key_file" 2>/dev/null; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to read private key secret $privkey_secret_name" >&2
+		return 1
+	fi
+
+	# Import the private key into an isolated temporary keyring.
+	if ! gpg --homedir "$gnupghome" --batch --import "$key_file" >/dev/null 2>&1; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to import private key" >&2
+		return 1
+	fi
+
+	# Decrypt to a file first so we never store potentially problematic bytes in a shell variable.
+	if ! gpg --homedir "$gnupghome" --batch --yes \
+		--output "$plaintext_file" \
+		--decrypt "$enc_file" >/dev/null 2>&1; then
+		rm -rf "$tmpdir"
+		echo "read_podman_secret_plaintext: failed to decrypt secret" >&2
+		return 1
+	fi
+
+	# Print exact plaintext bytes to stdout.
+	cat "$plaintext_file"
+
+	rm -rf "$tmpdir"
+	return 0
 }
 
 # Helper: update image line for a component that may be unversioned or versioned already
 # Usage: update_component_tag startleft "$SL_VER"
 function update_component_tag() {
-	local comp="$1" ver="$2"
-	local registry_url_escaped registry_ns_escaped
+	local comp="$1"
+	local ver="$2"
 
 	[[ -z $ver ]] && {
 		echo "NOTE: No version provided for $comp in JSON; skipping."
 		return 0
 	}
 
-	registry_url_escaped=$(printf '%s' "${REGISTRY_URL:-docker.io}" | sed 's/[.[\*^$()+?{|]/\\&/g')
-	registry_ns_escaped=$(printf '%s' "${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}" | sed 's/[.[\*^$()+?{|]/\\&/g')
+	local placeholder=""
+	case "$comp" in
+		startleft)
+			placeholder="STARTLEFT_IMAGE"
+			;;
+		reporting-module)
+			placeholder="REPORTING_MODULE_IMAGE"
+			;;
+		*)
+			echo "WARNING: Unsupported component for update_component_tag: $comp"
+			return 0
+			;;
+	esac
 
-	if grep -qE "^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp}(-[0-9.]+)?([[:space:]]|$)" "$COMPOSE_YML"; then
-		sed -i -E \
-			"s@(^[[:space:]]*image:[[:space:]]*(${registry_url_escaped}/)?${registry_ns_escaped}:${comp})(-[0-9.]+)?([[:space:]]*(#.*)?\$)@\\1-${ver}\\4@" \
-			"$COMPOSE_YML"
-		echo "Updated ${comp} image tag → ${REGISTRY_URL:-docker.io}/${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod}:${comp}-${ver}"
-	else
-		echo "WARNING: No '${comp}' image line found in $COMPOSE_YML; skipping ${comp} update."
-	fi
+	replace_placeholder_in_file "$COMPOSE_YML" "$placeholder" "$(image_ref "${comp}-${ver}")"
+	echo "Updated ${comp} image tag → $(image_ref "${comp}-${ver}")"
 }
 
 function configure_ip_pass() {
@@ -1165,7 +1403,8 @@ function detect_engine_ctx() {
 			UNIT_SCOPE="user"
 			UNIT_DIR="$HOME/.config/systemd/user"
 			SYSTEMCTL="systemctl --user"
-			UNIT_AFTER=$'After=network-online.target\nWants=network-online.target'
+			UNIT_AFTER=$'After=network-online.target
+Wants=network-online.target'
 			UNIT_REQUIRES=""
 			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'"${extra_registry_env}"
 			;;
@@ -1286,9 +1525,6 @@ function die() {
 	echo "ERROR: $*" >&2
 	exit 2
 }
-
-# Trim spaces
-function trim() { sed -E 's/^[[:space:]]+|[[:space:]]+$//g'; }
 
 # Replace just the VALUE part of a YAML env list line:
 #   "      - KEY=anything"  ->  "      - KEY=<value>"
@@ -1450,6 +1686,17 @@ function saml_files_exist() {
 	[[ -f "$COMPOSE_DIR/SAMLv2-config.groovy" ]] || [[ -f "$COMPOSE_DIR/idp.xml" ]] || [[ -f "$COMPOSE_DIR/iriusrisk-sp.jks" ]]
 }
 
+function detect_jeff_enabled() {
+	local override_file="$1"
+
+	if [[ -f $JEFF_FILE ]] && [[ -f $override_file ]]; then
+		if grep -q '^[[:space:]]*-[[:space:]]*IRIUS_AI_URL=http://jeff:8008' "$override_file"; then
+			return 0
+		fi
+	fi
+	return 1
+}
+
 function fetch_health() {
 	# Prints: "<http_code> <json>"
 	local code json
@@ -1480,6 +1727,550 @@ function wait_for_health() {
 		i=$((i + 1))
 	done
 	return 1
+}
+
+function podman_secret_exists() {
+	local name="$1"
+	podman secret inspect "$name" >/dev/null 2>&1
+}
+
+function podman_secret_to_tmpfile() {
+	local name="$1"
+	local outfile="$2"
+
+	# Read the secret content by mounting it into a temporary container
+	# and streaming it back to the host.
+	if ! podman run --rm \
+		--secret "$name" \
+		--entrypoint /bin/sh \
+		docker.io/library/alpine:3.20 \
+		-c "cat /run/secrets/$name" >"$outfile"; then
+		rm -f "$outfile"
+		return 1
+	fi
+
+	return 0
+}
+
+function is_ascii_armored_gpg_file() {
+	local file="$1"
+	grep -q '^-----BEGIN PGP MESSAGE-----' "$file"
+}
+
+function migrate_podman_secret_to_armored_if_needed() {
+	local secret_name="$1"
+	local privkey_secret_name="$2"
+
+	if ! podman_secret_exists "$secret_name"; then
+		echo "Secret $secret_name not present; skipping migration"
+		return 0
+	fi
+
+	if ! podman_secret_exists "$privkey_secret_name"; then
+		echo "WARNING: Secret $secret_name exists but $privkey_secret_name is missing; cannot migrate" >&2
+		return 1
+	fi
+
+	local workdir cipher_file priv_file plaintext_file gpg_home
+	workdir="$(mktemp -d "/tmp/secret-migrate.${secret_name}.XXXXXX")" || return 1
+	gpg_home="$workdir/gnupg"
+	mkdir -p "$gpg_home"
+	chmod 700 "$gpg_home"
+
+	cipher_file="$workdir/${secret_name}.gpg"
+	priv_file="$workdir/${privkey_secret_name}.asc"
+	plaintext_file="$workdir/${secret_name}.plain"
+
+	if ! podman_secret_to_tmpfile "$secret_name" "$cipher_file"; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to read secret payload for $secret_name" >&2
+		return 1
+	fi
+
+	if ! podman_secret_to_tmpfile "$privkey_secret_name" "$priv_file"; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to read private key secret for $privkey_secret_name" >&2
+		return 1
+	fi
+
+	# If already armored, nothing to do.
+	if is_ascii_armored_gpg_file "$cipher_file"; then
+		echo "Secret $secret_name is already ASCII-armored; no migration needed"
+		rm -rf "$workdir"
+		return 0
+	fi
+
+	if ! gpg --homedir "$gpg_home" --batch --import "$priv_file" >/dev/null 2>&1; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to import private key for $secret_name" >&2
+		return 1
+	fi
+
+	if ! gpg --homedir "$gpg_home" --batch --yes --output "$plaintext_file" --decrypt "$cipher_file" >/dev/null 2>&1; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to decrypt existing secret $secret_name" >&2
+		return 1
+	fi
+
+	local plaintext
+	plaintext="$(cat "$plaintext_file")"
+
+	# Re-encrypt and replace both secrets using the new implementation
+	if ! encrypt_and_store_secret "$plaintext" "$secret_name" "$privkey_secret_name"; then
+		rm -rf "$workdir"
+		echo "WARNING: Failed to re-encrypt and store migrated secret $secret_name" >&2
+		return 1
+	fi
+
+	rm -rf "$workdir"
+	echo "Migrated secret $secret_name to armored env-compatible format"
+	return 0
+}
+
+function migrate_existing_podman_secrets_if_needed() {
+	echo "Checking Podman secrets for old binary-encrypted payloads..."
+
+	migrate_podman_secret_to_armored_if_needed "db_pwd" "db_privkey"
+
+	migrate_podman_secret_to_armored_if_needed "keystore_pwd" "keystore_privkey"
+	migrate_podman_secret_to_armored_if_needed "key_alias_pwd" "key_alias_privkey"
+
+	migrate_podman_secret_to_armored_if_needed "azure_api_key" "azure_api_privkey"
+	migrate_podman_secret_to_armored_if_needed "gemini_api_key" "gemini_api_privkey"
+	migrate_podman_secret_to_armored_if_needed "redis_password" "redis_privkey"
+}
+
+# ----------------------------
+# Template refresh helpers
+# ----------------------------
+
+declare -A PRESERVED_VALUES=()
+
+function require_preserved_value() {
+	local key="$1"
+
+	if [[ -z ${PRESERVED_VALUES[$key]:-} ]]; then
+		echo "ERROR: Required client value could not be extracted: $key" >&2
+		exit 1
+	fi
+}
+
+function validate_preserved_values() {
+	# Always required
+	require_preserved_value "HOST_NAME"
+	require_preserved_value "POSTGRES_IP"
+
+	# Docker requires plaintext postgres password preserved
+	if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
+		require_preserved_value "POSTGRES_PASSWORD"
+	fi
+
+	# Jeff-specific values required only when Jeff is enabled
+	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		# Needed on both engines because they remain in the compose file
+		require_preserved_value "AZURE_ENDPOINT"
+		require_preserved_value "AZURE_OPENAI_ENDPOINT"
+		require_preserved_value "GEMINI_ENDPOINT"
+
+		# Only Docker keeps these in the Jeff compose file
+		if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
+			require_preserved_value "AZURE_API_KEY"
+			require_preserved_value "AZURE_OPENAI_API_KEY"
+			require_preserved_value "GEMINI_API_KEY"
+			require_preserved_value "REDIS_PASSWORD"
+		fi
+	fi
+}
+
+function extract_env_value() {
+	local key="$1"
+	local file="$2"
+
+	[[ -f $file ]] || return 1
+
+	awk -v key="$key" '
+		$0 ~ "^[[:space:]]*-[[:space:]]*" key "=" {
+			sub("^[[:space:]]*-[[:space:]]*" key "=", "", $0)
+			print $0
+			exit
+		}
+	' "$file"
+}
+
+function extract_host_name() {
+	local file="$1"
+	local val=""
+
+	[[ -f $file ]] || return 1
+
+	# Prefer NG_SERVER_NAME
+	val="$(extract_env_value "NG_SERVER_NAME" "$file" || true)"
+	if [[ -n $val ]]; then
+		printf '%s' "$(trim "$val")"
+		return 0
+	fi
+
+	# Fallback: derive from IRIUS_EXT_URL=https://host
+	val="$(extract_env_value "IRIUS_EXT_URL" "$file" || true)"
+	if [[ $val =~ ^https://(.+)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+
+	return 1
+}
+
+function extract_postgres_ip() {
+	local file="$1"
+	local db_url=""
+
+	[[ -f $file ]] || return 1
+
+	db_url="$(extract_env_value "IRIUS_DB_URL" "$file" || true)"
+	[[ -n $db_url ]] || return 1
+
+	# docker:
+	# jdbc:postgresql://10.0.0.5:5432/iriusprod?user=iriusprod&password=secret
+	# podman:
+	# jdbc:postgresql://10.0.0.5:5432/iriusprod?user=iriusprod
+	if [[ $db_url =~ ^jdbc:postgresql://([^:/?]+):5432/iriusprod ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+
+	return 1
+}
+
+function extract_postgres_password() {
+	local override_file="$1"
+	local postgres_file="$2"
+	local db_url=""
+	local val=""
+
+	# First try the tomcat DB URL
+	if [[ -f $override_file ]]; then
+		db_url="$(extract_env_value "IRIUS_DB_URL" "$override_file" || true)"
+		if [[ $db_url =~ [\?\&]password=([^&]+)$ ]]; then
+			printf '%s' "${BASH_REMATCH[1]}"
+			return 0
+		fi
+	fi
+
+	# Fallback: internal postgres compose file
+	if [[ -f $postgres_file ]]; then
+		val="$(awk '
+			$0 ~ "^[[:space:]]*POSTGRES_PASSWORD:[[:space:]]*" {
+				sub("^[[:space:]]*POSTGRES_PASSWORD:[[:space:]]*", "", $0)
+				print $0
+				exit
+			}
+		' "$postgres_file")"
+		if [[ -n $val ]]; then
+			printf '%s' "$(trim "$val")"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+function discover_placeholders() {
+	local file="$1"
+	local line rest name
+
+	[[ -f $file ]] || return 0
+
+	while IFS= read -r line || [[ -n $line ]]; do
+		rest="$line"
+
+		# Extract all ${VAR} occurrences from the line
+		while [[ $rest =~ \$\{([A-Za-z_][A-Za-z0-9_]*)\} ]]; do
+			name="${BASH_REMATCH[1]}"
+			printf '%s\n' "$name"
+
+			# Continue scanning after this match
+			rest="${rest#*"${BASH_REMATCH[0]}"}"
+		done
+	done <"$file"
+}
+
+function capture_preserved_values() {
+	local compose_file="$1"
+	local override_file="$2"
+	local jeff_file="$3"
+	local postgres_file="$4"
+	local compose_template="$5"
+	local override_template="$6"
+	local jeff_template="$7"
+	local postgres_template="$8"
+
+	local all_placeholders=()
+	local p
+
+	if [[ -n $compose_template && -f $compose_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$compose_template")
+	fi
+
+	if [[ -n $override_template && -f $override_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$override_template")
+	fi
+
+	if [[ -n $jeff_template && -f $jeff_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$jeff_template")
+	fi
+
+	if [[ -n $postgres_template && -f $postgres_template ]]; then
+		while IFS= read -r p; do
+			[[ -n $p ]] && all_placeholders+=("$p")
+		done < <(discover_placeholders "$postgres_template")
+	fi
+
+	if [[ ${#all_placeholders[@]} -eq 0 ]]; then
+		echo "ERROR: No placeholders discovered from templates." >&2
+		echo "  compose_template=$compose_template" >&2
+		echo "  override_template=$override_template" >&2
+		echo "  jeff_template=$jeff_template" >&2
+		echo "  postgres_template=$postgres_template" >&2
+		exit 1
+	fi
+
+	mapfile -t all_placeholders < <(printf '%s\n' "${all_placeholders[@]}" | sort -u)
+
+	echo "Preserving client-specific values from current compose files..."
+
+	for p in "${all_placeholders[@]}"; do
+		case "$p" in
+			HOST_NAME)
+				PRESERVED_VALUES["$p"]="$(extract_host_name "$override_file" || true)"
+				;;
+			POSTGRES_IP)
+				PRESERVED_VALUES["$p"]="$(extract_postgres_ip "$override_file" || true)"
+				;;
+			POSTGRES_PASSWORD)
+				PRESERVED_VALUES["$p"]="$(extract_postgres_password "$override_file" "$postgres_file" || true)"
+				;;
+			GEMINI_ENDPOINT)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
+				;;
+			AZURE_ENDPOINT)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
+				;;
+			AZURE_OPENAI_ENDPOINT)
+				if [[ -n $jeff_file ]]; then
+					PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_OPENAI_ENDPOINT" "$jeff_file" || true)"
+					[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
+				fi
+				;;
+			AZURE_API_KEY | AZURE_OPENAI_API_KEY | GEMINI_API_KEY | REDIS_PASSWORD)
+				if [[ ${CONTAINER_ENGINE:-} == "docker" && -n $jeff_file ]]; then
+					PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				fi
+				;;
+			NGINX_IMAGE | TOMCAT_IMAGE | STARTLEFT_IMAGE | REPORTING_MODULE_IMAGE)
+				PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$compose_file" || true)"
+				;;
+			JEFF_IMAGE | RAG_IMAGE | ASH_IMAGE | HAVEN_IMAGE | REDIS_IMAGE)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$jeff_file" || true)"
+				;;
+			POSTGRES_IMAGE)
+				PRESERVED_VALUES["$p"]="$(extract_image_value_for_placeholder "$p" "$postgres_file" || true)"
+				;;
+			*)
+				PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$override_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && [[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$compose_file" || true)"
+				[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$postgres_file" || true)"
+				;;
+		esac
+	done
+
+	echo "Captured values:"
+	for p in "${all_placeholders[@]}"; do
+		if [[ -n ${PRESERVED_VALUES[$p]:-} ]]; then
+			echo "  - $p=[set]"
+		fi
+	done
+}
+
+function copy_templates_to_final_locations() {
+	local override_template="$1"
+	local override_file="$2"
+	local jeff_template="$3"
+	local jeff_file="$4"
+	local compose_template="$5"
+	local compose_file="$6"
+	local postgres_template="$7"
+	local postgres_file="$8"
+
+	mkdir -p "$(dirname "$override_file")"
+
+	cp "$override_template" "$override_file"
+	cp "$compose_template" "$compose_file"
+
+	if [[ -n $jeff_template && -f $jeff_template ]]; then
+		cp "$jeff_template" "$jeff_file"
+	fi
+
+	if [[ -f $postgres_template ]]; then
+		cp "$postgres_template" "$postgres_file"
+	fi
+
+	echo "Copied fresh templates into place."
+}
+
+function replace_placeholder_in_file() {
+	local file="$1"
+	local var_name="$2"
+	local var_value="$3"
+
+	[[ -f $file ]] || return 0
+
+	VAR_NAME="$var_name" VAR_VALUE="$var_value" perl -0pi -e '
+		s/\$\{\Q$ENV{VAR_NAME}\E\}/$ENV{VAR_VALUE}/g
+	' "$file"
+}
+
+function restore_preserved_values() {
+	local compose_file="$1"
+	local override_file="$2"
+	local jeff_file="$3"
+	local postgres_file="$4"
+
+	local p
+	for p in "${!PRESERVED_VALUES[@]}"; do
+		[[ -n ${PRESERVED_VALUES[$p]} ]] || continue
+
+		replace_placeholder_in_file "$compose_file" "$p" "${PRESERVED_VALUES[$p]}"
+		replace_placeholder_in_file "$override_file" "$p" "${PRESERVED_VALUES[$p]}"
+		replace_placeholder_in_file "$jeff_file" "$p" "${PRESERVED_VALUES[$p]}"
+		replace_placeholder_in_file "$postgres_file" "$p" "${PRESERVED_VALUES[$p]}"
+	done
+
+	echo "Re-applied preserved client values to refreshed compose files."
+}
+
+function extract_service_image() {
+	local service="$1"
+	local file="$2"
+
+	[[ -f $file ]] || return 1
+
+	awk -v svc="$service" '
+		$0 ~ "^[[:space:]]{2}" svc ":[[:space:]]*$" {
+			in_service=1
+			next
+		}
+		in_service && /^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*$/ {
+			in_service=0
+		}
+		in_service && /^[[:space:]]{4}image:[[:space:]]*/ {
+			sub(/^[[:space:]]{4}image:[[:space:]]*/, "", $0)
+			print
+			exit
+		}
+	' "$file"
+}
+
+function extract_image_value_for_placeholder() {
+	local placeholder="$1"
+	local file="$2"
+
+	[[ -f $file ]] || return 1
+
+	case "$placeholder" in
+		NGINX_IMAGE) extract_service_image "nginx" "$file" ;;
+		TOMCAT_IMAGE) extract_service_image "tomcat" "$file" ;;
+		STARTLEFT_IMAGE) extract_service_image "startleft" "$file" ;;
+		REPORTING_MODULE_IMAGE) extract_service_image "reporting-module" "$file" ;;
+		JEFF_IMAGE) extract_service_image "jeff" "$file" ;;
+		RAG_IMAGE) extract_service_image "rag" "$file" ;;
+		ASH_IMAGE) extract_service_image "ash" "$file" ;;
+		HAVEN_IMAGE) extract_service_image "haven" "$file" ;;
+		REDIS_IMAGE) extract_service_image "redis" "$file" ;;
+		POSTGRES_IMAGE) extract_service_image "postgres" "$file" ;;
+		*) return 1 ;;
+	esac
+}
+
+function refresh_generated_compose_files_from_templates() {
+	PRESERVED_VALUES=()
+
+	local compose_dir="$1"
+	local engine="$2"
+
+	local base_dir
+	base_dir="$(cd "$compose_dir/.." && pwd)"
+
+	local templates_dir="$base_dir/templates/$engine"
+
+	local override_template="$templates_dir/$engine-compose.override.tpl"
+	local override_file="$compose_dir/$engine-compose.override.yml"
+	local compose_template="$templates_dir/$engine-compose.tpl"
+	local compose_file="$compose_dir/$engine-compose.yml"
+	local postgres_template="$templates_dir/$engine-compose.postgres.tpl"
+	local postgres_file="$compose_dir/$engine-compose.postgres.yml"
+
+	local jeff_template=""
+	local jeff_file=""
+
+	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
+		jeff_template="$templates_dir/$engine-compose.jeff.tpl"
+		jeff_file="$compose_dir/$engine-compose.jeff.yml"
+	fi
+
+	[[ -f $override_template ]] || {
+		echo "ERROR: Missing template: $override_template" >&2
+		exit 1
+	}
+	[[ -f $compose_template ]] || {
+		echo "ERROR: Missing template: $compose_template" >&2
+		exit 1
+	}
+	[[ -f $postgres_template ]] || {
+		echo "ERROR: Missing template: $postgres_template" >&2
+		exit 1
+	}
+
+	if [[ -n $jeff_template ]]; then
+		[[ -f $jeff_template ]] || {
+			echo "ERROR: Missing template: $jeff_template" >&2
+			exit 1
+		}
+	fi
+
+	capture_preserved_values \
+		"$compose_file" \
+		"$override_file" \
+		"$jeff_file" \
+		"$postgres_file" \
+		"$compose_template" \
+		"$override_template" \
+		"$jeff_template" \
+		"$postgres_template"
+
+	validate_preserved_values
+
+	copy_templates_to_final_locations \
+		"$override_template" \
+		"$override_file" \
+		"$jeff_template" \
+		"$jeff_file" \
+		"$compose_template" \
+		"$compose_file" \
+		"$postgres_template" \
+		"$postgres_file"
+
+	restore_preserved_values \
+		"$compose_file" \
+		"$override_file" \
+		"$jeff_file" \
+		"$postgres_file"
 }
 
 # —————————————————————————————————————————————————————————————
@@ -1840,4 +2631,253 @@ function save_local_with_fullref() {
 	skopeo copy --insecure-policy \
 		"containers-storage:$ref" \
 		"oci-archive:$BDIR/images/$fname:$ref"
+}
+
+# —————————————————————————————————————————————————————————————
+# Jeff functions
+# —————————————————————————————————————————————————————————————
+
+function check_gemini_api() {
+	local endpoint="$1"
+	local api_key="$2"
+	local tmp_out status
+
+	tmp_out=$(mktemp)
+
+	status=$(curl -sS -o "$tmp_out" -w "%{http_code}" \
+		-H "Content-Type: application/json" \
+		-H "Authorization: Bearer $api_key" \
+		-X POST \
+		-d '{
+			"model": "gemini-2.5-flash",
+			"messages": [
+				{"role": "user", "content": "Reply with exactly OK"}
+			],
+			"max_tokens": 5
+		}' \
+		"${endpoint%/}/chat/completions")
+
+	if [[ $status == "200" ]]; then
+		echo "Gemini API connectivity OK"
+	else
+		msg="ERROR: Gemini API check failed (HTTP $status). Check GEMINI_ENDPOINT and GEMINI_API_KEY"
+		echo "$msg"
+		ERRORS+=("$msg")
+		echo "Gemini response snippet:"
+		head -c 300 "$tmp_out"
+		echo
+	fi
+
+	rm -f "$tmp_out"
+}
+
+function check_azure_endpoint() {
+	local endpoint="$1"
+	local api_key="$2"
+	local tmp_out status
+
+	tmp_out=$(mktemp)
+
+	status=$(curl -sS -o "$tmp_out" -w "%{http_code}" \
+		-H "api-key: $api_key" \
+		-I \
+		"${endpoint%/}/")
+
+	case "$status" in
+		200 | 204 | 301 | 302 | 401 | 403 | 404)
+			echo "Azure endpoint reachable at $endpoint"
+			echo "Azure check is partial only: deployment-level inference cannot be tested without deployment name"
+			;;
+		000)
+			msg="ERROR: Could not reach Azure endpoint at $endpoint (DNS/TLS/network failure)"
+			echo "$msg"
+			ERRORS+=("$msg")
+			;;
+		*)
+			msg="WARNING: Azure endpoint probe returned HTTP $status at $endpoint"
+			echo "$msg"
+			WARNINGS+=("$msg")
+			;;
+	esac
+
+	rm -f "$tmp_out"
+}
+
+function prompt_jeff_config() {
+	if [[ ${JEFF_ENABLED:-n} != "y" ]]; then
+		return 0
+	fi
+
+	AZURE_ENDPOINT=$(prompt_nonempty "Enter the Azure endpoint for Jeff AI assistant")
+	AZURE_API_KEY=$(prompt_nonempty "Enter the Azure API key for Jeff AI assistant")
+	GEMINI_ENDPOINT=$(prompt_nonempty "Enter the Gemini endpoint for Jeff AI assistant")
+	GEMINI_API_KEY=$(prompt_nonempty "Enter the Gemini API key for Jeff AI assistant")
+
+	export AZURE_ENDPOINT AZURE_API_KEY GEMINI_ENDPOINT GEMINI_API_KEY
+}
+
+function update_base_override_env() {
+	local override_file="$1"
+	local host_name="$2"
+	local irius_ext_url="$3"
+	local jdbc_url="$4"
+
+	if [[ ! -f $override_file ]]; then
+		echo "ERROR: $override_file not found. Please ensure you have cloned the repo and have the override template."
+		exit 1
+	fi
+
+	sed -i "s|NG_SERVER_NAME=.*|NG_SERVER_NAME=$host_name|g" "$override_file"
+	sed -i "s|IRIUS_EXT_URL=.*|IRIUS_EXT_URL=$irius_ext_url|g" "$override_file"
+
+	# remove any existing DB URL line before re-inserting
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_DB_URL=/d' "$override_file"
+
+	awk -v db_url="      - IRIUS_DB_URL=$jdbc_url" '
+	  BEGIN {tomcat=0}
+	  /tomcat:/ {print; tomcat=1; next}
+	  tomcat && /environment:/ {
+	      print
+	      print db_url
+	      tomcat=0
+	      next
+	  }
+	  {print}
+	' "$override_file" >"${override_file}.tmp" && mv "${override_file}.tmp" "$override_file"
+
+	echo "Updated base settings in $override_file"
+}
+
+function enable_jeff_override_env() {
+	local override_file="$1"
+
+	if [[ ! -f $override_file ]]; then
+		echo "ERROR: $override_file not found. Please ensure you have cloned the repo and have the override template."
+		exit 1
+	fi
+
+	# remove existing Jeff lines first
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_AI_URL=/d' "$override_file"
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_AI_ASH_URL=/d' "$override_file"
+	sed -i '/^[[:space:]]*-[[:space:]]*IRIUS_AI_HAVEN_URL=/d' "$override_file"
+
+	awk '
+	  BEGIN {tomcat=0}
+	  /tomcat:/ {print; tomcat=1; next}
+	  tomcat && /environment:/ {
+	      print
+	      print "      - IRIUS_AI_URL=http://jeff:8008"
+	      print "      - IRIUS_AI_ASH_URL=http://ash:8009"
+	      print "      - IRIUS_AI_HAVEN_URL=http://haven:8012"
+	      tomcat=0
+	      next
+	  }
+	  {print}
+	' "$override_file" >"${override_file}.tmp" && mv "${override_file}.tmp" "$override_file"
+
+	echo "Enabled Jeff settings in $override_file"
+}
+
+function configure_jeff_file() {
+	local jeff_file="$1"
+
+	if [[ ! -f $jeff_file ]]; then
+		echo "ERROR: $jeff_file not found. Please ensure you have cloned the repo and have the Jeff template."
+		exit 1
+	fi
+
+	echo "Generating random Redis password for Jeff setup."
+	REDIS_PASSWORD="$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)"
+	export REDIS_PASSWORD
+
+	echo "Updating $jeff_file"
+
+	sed -i "s|AZURE_ENDPOINT=.*|AZURE_ENDPOINT=$AZURE_ENDPOINT|g" "$jeff_file"
+	sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$AZURE_ENDPOINT|g" "$jeff_file"
+	sed -i "s|GEMINI_API_BASE=.*|GEMINI_API_BASE=$GEMINI_ENDPOINT|g" "$jeff_file"
+
+	if [[ $CONTAINER_ENGINE == "docker" ]]; then
+		sed -i "s|AZURE_API_KEY=.*|AZURE_API_KEY=$AZURE_API_KEY|g" "$jeff_file"
+		sed -i "s|AZURE_OPENAI_API_KEY=.*|AZURE_OPENAI_API_KEY=$AZURE_API_KEY|g" "$jeff_file"
+		sed -i "s|GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|g" "$jeff_file"
+
+		escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\]/\\&/g')
+		sed -i "s|\"\${REDIS_PASSWORD}\"|\"$escaped_redis_password\"|g" "$jeff_file"
+		sed -i "s|\${REDIS_PASSWORD}|$escaped_redis_password|g" "$jeff_file"
+	else
+		sed -i '/AZURE_API_KEY=/d' "$jeff_file"
+		sed -i '/AZURE_OPENAI_API_KEY=/d' "$jeff_file"
+		sed -i '/GEMINI_API_KEY=/d' "$jeff_file"
+		sed -i '/REDIS_PASSWORD=/d' "$jeff_file"
+
+		encrypt_and_store_secret "$AZURE_API_KEY" "azure_api_key" "azure_api_privkey"
+		encrypt_and_store_secret "$GEMINI_API_KEY" "gemini_api_key" "gemini_api_privkey"
+		encrypt_and_store_secret "$REDIS_PASSWORD" "redis_password" "redis_privkey"
+	fi
+
+	echo "Updated $jeff_file"
+}
+
+function update_compose_image_placeholders() {
+	local compose_file="$1"
+	local jeff_file="$2"
+	local postgres_file="$3"
+
+	local startleft_image reporting_module_image
+	local nginx_image tomcat_image
+	local jeff_image rag_image ash_image haven_image
+	local postgres_image redis_image
+
+	[[ -f $compose_file ]] || {
+		echo "ERROR: compose file not found: $compose_file" >&2
+		exit 1
+	}
+
+	startleft_image="$(image_ref "startleft")"
+	reporting_module_image="$(image_ref "reporting-module")"
+
+	# Main compose placeholders
+	replace_placeholder_in_file "$compose_file" "STARTLEFT_IMAGE" "$startleft_image"
+	replace_placeholder_in_file "$compose_file" "REPORTING_MODULE_IMAGE" "$reporting_module_image"
+
+	if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
+		nginx_image="$(image_ref "nginx")"
+		tomcat_image="$(image_ref "tomcat-4")"
+
+		replace_placeholder_in_file "$compose_file" "NGINX_IMAGE" "$nginx_image"
+		replace_placeholder_in_file "$compose_file" "TOMCAT_IMAGE" "$tomcat_image"
+
+		if [[ -f $jeff_file ]]; then
+			jeff_image="$(image_ref "ai-jeff-4.6.2")"
+			rag_image="$(image_ref "ai-rag-1.2.2")"
+			ash_image="$(image_ref "ai-ash-1.7.0")"
+			haven_image="$(image_ref "ai-haven-1.0.1")"
+			redis_image="$(redis_image_ref)"
+
+			replace_placeholder_in_file "$jeff_file" "JEFF_IMAGE" "$jeff_image"
+			replace_placeholder_in_file "$jeff_file" "RAG_IMAGE" "$rag_image"
+			replace_placeholder_in_file "$jeff_file" "ASH_IMAGE" "$ash_image"
+			replace_placeholder_in_file "$jeff_file" "HAVEN_IMAGE" "$haven_image"
+			replace_placeholder_in_file "$jeff_file" "REDIS_IMAGE" "$redis_image"
+		fi
+
+		if [[ -f $postgres_file ]]; then
+			postgres_image="$(postgres_image_ref)"
+			replace_placeholder_in_file "$postgres_file" "POSTGRES_IMAGE" "$postgres_image"
+		fi
+	else
+		# Podman: leave localhost/... images alone.
+		# Only replace placeholders that are intentionally registry-driven.
+		if [[ -f $jeff_file ]]; then
+			redis_image="$(redis_image_ref)"
+			replace_placeholder_in_file "$jeff_file" "REDIS_IMAGE" "$redis_image"
+		fi
+
+		if [[ -f $postgres_file ]]; then
+			postgres_image="$(postgres_image_ref)"
+			replace_placeholder_in_file "$postgres_file" "POSTGRES_IMAGE" "$postgres_image"
+		fi
+	fi
+
+	echo "Updated compose image placeholders"
 }

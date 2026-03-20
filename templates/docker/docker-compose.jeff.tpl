@@ -1,0 +1,90 @@
+version: '3.7'
+networks:
+  iriusrisk-backend:
+services:
+  jeff:
+    environment:
+      - IRIUS_HOST=https://tomcat:8080
+      - CORS_ORIGINS=https://localhost:8003, http://tomcat:8080, https://tomcat:8080, https://tomcat:80, http://tomcat:80
+      - RAG_HOST=http://rag:8010
+      - ASH_HOST=http://ash:8009
+      - HAVEN_HOST=http://haven:8012
+      - AZURE_ENDPOINT=${AZURE_ENDPOINT}
+      - AZURE_API_KEY=${AZURE_API_KEY}
+      - BLACKLIST_ENABLED=False
+    ports:
+      - 8008:8008
+    image: ${JEFF_IMAGE}
+    container_name: jeff
+    restart: unless-stopped
+    networks:
+      - iriusrisk-backend
+  rag:
+    environment:
+      - OPENAI_API_KEY=""
+      - AZURE_API_VERSION=2025-03-01-preview
+      - AZURE_API_KEY=${AZURE_API_KEY}
+      - AZURE_DEPLOYMENT=text-embedding-3-small
+      - AZURE_ENDPOINT=${AZURE_ENDPOINT}
+      - EMBEDDING_MODEL=text-embedding-3-small
+      - USE_AZURE=True
+      - IRIUS_SECURE=True
+      - DEBUG=False
+    ports:
+      - 8010:8010
+    image: ${RAG_IMAGE}
+    container_name: rag
+    restart: unless-stopped
+    networks:
+    - iriusrisk-backend
+  ash:
+    environment:
+      - CORS_ORIGINS=http://localhost:5173, http://localhost:8003
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - RAG_HOST=http://rag:8010
+      - GEMINI_API_BASE=${GEMINI_ENDPOINT}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+    ports:
+      - 8009:8009
+    image: ${ASH_IMAGE}
+    container_name: ash
+    restart: unless-stopped
+    networks:
+    - iriusrisk-backend  
+  haven:
+    environment:
+      - ENVIRONMENT=PROD
+      - DEBUG=false
+      - PORT=8012
+      - CORS_ORIGINS=http://localhost:8012
+      - AZURE_API_VERSION=2025-03-01-preview
+      - AZURE_API_KEY=${AZURE_API_KEY}
+      - AZURE_ENDPOINT=${AZURE_ENDPOINT}
+      - AZURE_DEPLOYMENT=text-embedding-3-small
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    ports:
+      - 8012:8012
+    image: ${HAVEN_IMAGE}
+    container_name: haven
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+    - iriusrisk-backend
+  redis:
+    image: ${REDIS_IMAGE}
+    container_name: redis
+    restart: always
+    command: redis-stack-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+    - iriusrisk-backend

@@ -52,10 +52,9 @@ echo "Current directory: $(pwd)"
 echo
 
 # —————————————————————————————————————————————————————————————
-# Pick container engine and registry
+# Pick container engine
 # —————————————————————————————————————————————————————————————
 prompt_engine
-prompt_registry_settings
 
 # —————————————————————————————————————————————————————————————
 # Copy templates ready for customisation
@@ -176,6 +175,8 @@ else
 	echo "Unknown container engine: $CONTAINER_ENGINE"
 	exit 1
 fi
+
+prompt_registry_settings
 
 prompt_postgres_option setup
 

@@ -1686,6 +1686,17 @@ function saml_files_exist() {
 	[[ -f "$COMPOSE_DIR/SAMLv2-config.groovy" ]] || [[ -f "$COMPOSE_DIR/idp.xml" ]] || [[ -f "$COMPOSE_DIR/iriusrisk-sp.jks" ]]
 }
 
+function detect_jeff_enabled() {
+	local override_file="$1"
+
+	if [[ -f $JEFF_FILE ]] && [[ -f $override_file ]]; then
+		if grep -q '^[[:space:]]*-[[:space:]]*IRIUS_AI_URL=http://jeff:8008' "$override_file"; then
+			return 0
+		fi
+	fi
+	return 1
+}
+
 function fetch_health() {
 	# Prints: "<http_code> <json>"
 	local code json

@@ -164,8 +164,25 @@ echo "Using compose dir: $COMPOSE_DIR"
 
 cd "$COMPOSE_DIR"
 
+# Detect CURRENT deployment flags so we can shut down the currently running stack correctly
+PRE_SAML_ENABLED="n"
+PRE_JEFF_ENABLED="n"
+
+if saml_files_exist; then
+	PRE_SAML_ENABLED="y"
+fi
+
+if detect_jeff_enabled "$OVERRIDE_FILE"; then
+	PRE_JEFF_ENABLED="y"
+fi
+
+JEFF_ENABLED="$PRE_JEFF_ENABLED"
+export JEFF_ENABLED
+
+PRE_RESTORE_COMPOSE_OVERRIDE="$(build_compose_override "$PRE_SAML_ENABLED" "$USE_INTERNAL_PG")"
+
 echo "Stopping current stack ..."
-$COMPOSE_TOOL $COMPOSE_OVERRIDE down
+$COMPOSE_TOOL $PRE_RESTORE_COMPOSE_OVERRIDE down
 
 # —————————————————————————————————————————————————————————————
 # Restore compose files from backup
@@ -204,19 +221,16 @@ case "$CONTAINER_ENGINE" in
 esac
 echo
 
-# Recompute restored feature flags from restored files
+# Recompute flags from RESTORED files so subsequent compose operations target the rollback version correctly
+SAML_ENABLED="n"
+JEFF_ENABLED="n"
+
 if saml_files_exist; then
 	SAML_ENABLED="y"
 fi
 
-if [[ -f $JEFF_FILE ]] && [[ -f $OVERRIDE_FILE ]]; then
-	if grep -q '^[[:space:]]*-[[:space:]]*IRIUS_AI_URL=http://jeff:8008' "$OVERRIDE_FILE"; then
-		JEFF_ENABLED="y"
-	else
-		JEFF_ENABLED="n"
-	fi
-else
-	JEFF_ENABLED="n"
+if detect_jeff_enabled "$OVERRIDE_FILE"; then
+	JEFF_ENABLED="y"
 fi
 export JEFF_ENABLED
 

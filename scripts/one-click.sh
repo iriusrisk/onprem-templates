@@ -91,8 +91,6 @@ done
 
 echo "All templates copied successfully."
 
-update_compose_image_placeholders "$COMPOSE_FILE" "$JEFF_FILE" "$POSTGRES_FILE"
-
 # —————————————————————————————————————————————————————————————
 # Run preflight and capture output
 # —————————————————————————————————————————————————————————————
@@ -177,6 +175,8 @@ else
 fi
 
 prompt_registry_settings
+
+update_compose_image_placeholders "$COMPOSE_FILE" "$JEFF_FILE" "$POSTGRES_FILE"
 
 prompt_postgres_option setup
 

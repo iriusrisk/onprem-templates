@@ -645,6 +645,130 @@ If you configure external PostgreSQL or custom container registries, network acc
 
 ---
 
+
+## 🌐 Proxy Configuration (Optional)
+
+If your environment requires outbound traffic to go through an HTTP/HTTPS proxy, the deployment scripts support proxy configuration via standard environment variables.
+
+This applies to:
+
+- Downloading dependencies (packages, images)
+- Podman image customization steps
+- Container runtime behavior
+- Systemd-managed services (Docker and Podman)
+
+---
+
+### 🔧 How to Configure a Proxy
+
+Before running the installer (`bootstrap.sh`, `one-click.sh`, or `upgrade.sh`), export the required proxy environment variables in your shell.
+
+Example:
+
+```bash
+export HTTP_PROXY=http://proxy.example.com:3128
+export HTTPS_PROXY=http://proxy.example.com:3128
+export NO_PROXY=localhost,127.0.0.1
+```
+
+Lowercase variants are also supported:
+
+```bash
+export http_proxy=http://proxy.example.com:3128
+export https_proxy=http://proxy.example.com:3128
+export no_proxy=localhost,127.0.0.1
+```
+
+Additional optional variables:
+
+```bash
+export FTP_PROXY=http://proxy.example.com:3128
+export ALL_PROXY=http://proxy.example.com:3128
+```
+
+---
+
+### ▶️ Running the Installer with Proxy
+
+Once the variables are set, run the installer as normal:
+
+```bash
+./bootstrap.sh
+```
+
+or:
+
+```bash
+./one-click.sh
+```
+
+No additional flags or configuration are required.
+
+---
+
+### ⚙️ What the Scripts Do Automatically
+
+If proxy variables are detected, the automation will:
+
+- Pass proxy settings into Podman build containers during image customization
+- Inject proxy variables into systemd service definitions
+- Ensure all runtime containers inherit the proxy configuration
+
+If no proxy variables are set, the scripts behave exactly as normal with no changes to the deployment flow.
+
+---
+
+### 🔍 Verifying Proxy Configuration
+
+Podman (rootless):
+
+```bash
+systemctl --user show-environment | grep -i proxy
+```
+
+Docker:
+
+```bash
+sudo systemctl show iriusrisk-docker | grep -i proxy
+```
+
+Check inside containers:
+
+```bash
+podman exec -it <container> env | grep -i proxy
+```
+
+or:
+
+```bash
+docker exec -it <container> env | grep -i proxy
+```
+
+---
+
+### ⚠️ Notes and Best Practices
+
+- Ensure your proxy allows access to:
+  - GitHub (github.com, raw.githubusercontent.com)
+  - Container registries (docker.io or your custom registry)
+  - OS package repositories
+- Include internal services in NO_PROXY:
+  localhost,127.0.0.1,postgres,jeff,redis
+- If using an external PostgreSQL database, include its host in NO_PROXY.
+
+---
+
+### 📌 Summary
+
+| Scenario | Action |
+|----------|--------|
+| No proxy | No action needed |
+| Proxy required | Export variables before running scripts |
+| Already deployed | Restart systemd service after updating env vars |
+
+---
+
+
 ### Fully Air-Gapped Environments
 
 If outbound internet access is not allowed, deployment can still be performed using offline mode. 

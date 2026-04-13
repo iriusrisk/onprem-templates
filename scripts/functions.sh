@@ -104,6 +104,37 @@ function refresh_base_images() {
 	export POSTGRES_BASE_IMAGE REDIS_BASE_IMAGE
 }
 
+function add_proxy_env_args() {
+	local -n podman_args_ref="$1"
+	local proxy_var proxy_value
+
+	for proxy_var in \
+		HTTP_PROXY HTTPS_PROXY NO_PROXY \
+		http_proxy https_proxy no_proxy \
+		FTP_PROXY ftp_proxy ALL_PROXY all_proxy; do
+		proxy_value="${!proxy_var:-}"
+		if [[ -n $proxy_value ]]; then
+			podman_args_ref+=(--env "${proxy_var}=${proxy_value}")
+		fi
+	done
+}
+
+function systemd_proxy_env_lines() {
+	local proxy_var proxy_value out=""
+
+	for proxy_var in \
+		HTTP_PROXY HTTPS_PROXY NO_PROXY \
+		http_proxy https_proxy no_proxy \
+		FTP_PROXY ftp_proxy ALL_PROXY all_proxy; do
+		proxy_value="${!proxy_var:-}"
+		if [[ -n $proxy_value ]]; then
+			out+=$'\n'"Environment=${proxy_var}=${proxy_value}"
+		fi
+	done
+
+	printf '%s' "$out"
+}
+
 function prompt_registry_settings() {
 	if [ "${OFFLINE:-0}" -eq 1 ]; then
 		echo "Offline mode detected."
@@ -702,6 +733,7 @@ function build_podman_secret_image() {
 	local run_as_user="${7:-}"
 	local commit_cmd="${8:-}"
 	local wrapper_file final_exec_file
+	local -a podman_create_args=()
 
 	local original_entrypoint_json original_cmd_json original_entrypoint_exec original_user
 
@@ -774,8 +806,11 @@ EOF
 		printf '\nexec "$@"\n' >>"$wrapper_file"
 	fi
 
+	add_proxy_env_args podman_create_args
+
 	podman rm -f "$tmp_name" 2>/dev/null || true
 	podman create \
+		"${podman_create_args[@]}" \
 		--name "$tmp_name" \
 		--user root \
 		--entrypoint /bin/sh \
@@ -1381,6 +1416,8 @@ function detect_engine_ctx() {
 	NEED_DOCKER_CFG=""
 
 	local extra_registry_env=""
+	local proxy_env_lines
+	proxy_env_lines="$(systemd_proxy_env_lines)"
 	if [[ ${REGISTRY_URL:-docker.io} != "docker.io" || ${REGISTRY_NAMESPACE:-continuumsecurity/iriusrisk-prod} != "continuumsecurity/iriusrisk-prod" ]]; then
 		extra_registry_env=$'\nEnvironment=REGISTRY_URL='"${REGISTRY_URL}"$'\nEnvironment=REGISTRY_NAMESPACE='"${REGISTRY_NAMESPACE}"
 	fi
@@ -1394,7 +1431,7 @@ function detect_engine_ctx() {
 			SYSTEMCTL="sudo systemctl"
 			UNIT_AFTER=$'After=network.target docker.service'
 			UNIT_REQUIRES=$'Requires=docker.service'
-			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'"${extra_registry_env}"
+			UNIT_ENV_LINES=$'Environment=DOCKER_CONFIG=/etc/docker\nEnvironment=COMPOSE_INTERACTIVE_NO_CLI=1'"${extra_registry_env}${proxy_env_lines}"
 			NEED_DOCKER_CFG="true"
 			;;
 		podman)
@@ -1406,7 +1443,7 @@ function detect_engine_ctx() {
 			UNIT_AFTER=$'After=network-online.target
 Wants=network-online.target'
 			UNIT_REQUIRES=""
-			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'"${extra_registry_env}"
+			UNIT_ENV_LINES=$'Environment=PODMAN_SYSTEMD_UNIT=%n'"${extra_registry_env}${proxy_env_lines}"
 			;;
 		*)
 			echo "Unknown engine '$ENGINE'." >&2

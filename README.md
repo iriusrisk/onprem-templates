@@ -391,7 +391,7 @@ To migrate an existing IriusRisk on-prem installation to the new template-based 
 
 | Component            | Requirement                                    |
 |----------------------|------------------------------------------------|
-| **OS**               | Linux (RHEL 9+, CentOS-based, Debian-based, AWS Linux-based) |
+| **OS**               | Linux (RHEL 9, CentOS 9 based, Debian-based, AWS Linux-based) |
 | **PostgreSQL**       | 15+ (installed automatically if chosen)        |
 | **Java**             | 17+                                            |
 | **Docker**           | 20.10+                                         |

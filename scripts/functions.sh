@@ -249,9 +249,45 @@ function install_docker() {
 		echo "✅ Docker installed and legacy docker-compose v1 ready at /usr/local/bin/docker-compose"
 	elif command -v apt-get &>/dev/null; then
 		sudo apt-get update
-		sudo apt-get install -y docker.io docker-compose
-		sudo systemctl start docker
-		sudo systemctl enable docker
+
+		sudo apt-get install -y docker.io
+
+		# Install Compose v2 where available.
+		sudo apt-get install -y docker-compose-v2 ||
+			sudo apt-get install -y docker-compose-plugin ||
+			sudo apt-get install -y docker-compose || {
+			echo "ERROR: failed to install Docker Compose." >&2
+			return 1
+		}
+
+		sudo systemctl enable --now docker
+
+		# Only create shim if docker-compose is missing but docker compose works.
+		if ! command -v docker-compose >/dev/null 2>&1; then
+			if docker compose version >/dev/null 2>&1; then
+				sudo tee /usr/local/bin/docker-compose >/dev/null <<'EOF'
+#!/usr/bin/env bash
+
+if [[ "${1:-}" == "--version" ]]; then
+	exec docker compose version
+fi
+
+exec docker compose "$@"
+EOF
+
+				sudo chmod +x /usr/local/bin/docker-compose
+			else
+				echo "ERROR: neither docker-compose nor docker compose is available." >&2
+				return 1
+			fi
+		fi
+
+		if ! docker-compose --version >/dev/null 2>&1; then
+			echo "ERROR: docker-compose compatibility command is not working." >&2
+			return 1
+		fi
+
+		echo "Docker installed; docker-compose command available."
 	else
 		echo "Please install Docker and Docker Compose manually." >&2
 		exit 1

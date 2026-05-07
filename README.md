@@ -392,7 +392,7 @@ To migrate an existing IriusRisk on-prem installation to the new template-based 
 | Component            | Requirement                                    |
 |----------------------|------------------------------------------------|
 | **OS**               | Linux (RHEL 9, CentOS 9 based, Debian-based, AWS Linux-based) |
-| **PostgreSQL**       | 15+ (installed automatically if chosen)        |
+| **PostgreSQL**       | 15 - 16 (installed automatically if chosen)        |
 | **Java**             | 17+                                            |
 | **Docker**           | 20.10+                                         |
 | **Podman** _(alt.)_  | 5.x+ with `podman-compose` & rootless support  |
@@ -812,7 +812,7 @@ The deployment scripts have been tested on the following Linux distributions:
 - **RHEL 9**
 - **Rocky Linux 9.7**
 - **Amazon Linux 2023**
-- **Ubuntu 22.04**
+- **Ubuntu 22 - 26**
 
 Other RHEL 9 compatible distributions (such as AlmaLinux 9) may also work but have not been explicitly tested.
 

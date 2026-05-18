@@ -218,19 +218,29 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 			echo "AZURE_ENDPOINT: $AZURE_ENDPOINT_VALUE"
 		fi
 
-		GEMINI_ENDPOINT_VALUE=$(grep 'GEMINI_API_BASE=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_BASE=//;s/"//g' | xargs)
-		if [[ -z $GEMINI_ENDPOINT_VALUE || $GEMINI_ENDPOINT_VALUE == '${GEMINI_API_BASE}' ]]; then
-			msg="WARNING: GEMINI_API_BASE must be set to a real value in $JEFF_FILE when Jeff is enabled"
+		PROJECT_ID_VALUE=$(grep 'GEMINI_PROJECT_ID=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_PROJECT_ID=//;s/"//g' | xargs)
+		if [[ -z $PROJECT_ID_VALUE || $PROJECT_ID_VALUE == '${PROJECT_ID}' ]]; then
+			msg="WARNING: GEMINI_PROJECT_ID must be set to a real value in $JEFF_FILE when Jeff is enabled"
 			echo "$msg"
 			WARNINGS+=("$msg")
 			JEFF_VALUES_FILLED=0
 		else
-			echo "GEMINI_API_BASE: $GEMINI_ENDPOINT_VALUE"
+			echo "GEMINI_PROJECT_ID: $PROJECT_ID_VALUE"
+		fi
+
+		GEMINI_REGION_VALUE=$(grep 'GEMINI_REGION=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_REGION=//;s/"//g' | xargs)
+		if [[ -z $GEMINI_REGION_VALUE || $GEMINI_REGION_VALUE == '${GEMINI_REGION}' ]]; then
+			msg="WARNING: GEMINI_REGION must be set to a real value in $JEFF_FILE when Jeff is enabled"
+			echo "$msg"
+			WARNINGS+=("$msg")
+			JEFF_VALUES_FILLED=0
+		else
+			echo "GEMINI_REGION: $GEMINI_REGION_VALUE"
 		fi
 
 		if [[ $CONTAINER_ENGINE == "podman" ]]; then
 			AZURE_API_KEY_VALUE="$(read_podman_secret_plaintext azure_api_key azure_api_privkey || true)"
-			GEMINI_API_KEY_VALUE="$(read_podman_secret_plaintext gemini_api_key gemini_api_privkey || true)"
+			GCP_S_A_CREDENTIALS_VALUE="$(read_podman_secret_plaintext gcp_sa_credentials gcp_sa_privkey || true)"
 			REDIS_PASSWORD_VALUE="$(read_podman_secret_plaintext redis_password redis_privkey || true)"
 
 			if [[ -z $AZURE_API_KEY_VALUE ]]; then
@@ -242,13 +252,13 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 				echo "azure_api_key Podman secret is set"
 			fi
 
-			if [[ -z $GEMINI_API_KEY_VALUE ]]; then
-				msg="WARNING: Podman secret 'gemini_api_key' must exist and be readable when Jeff is enabled"
+			if [[ -z $GCP_S_A_CREDENTIALS_VALUE ]]; then
+				msg="WARNING: Podman secret 'gcp_sa_credentials' must exist and be readable when Jeff is enabled"
 				echo "$msg"
 				WARNINGS+=("$msg")
 				JEFF_VALUES_FILLED=0
 			else
-				echo "gemini_api_key Podman secret is set"
+				echo "gcp_sa_credentials Podman secret is set"
 			fi
 
 			if [[ -z $REDIS_PASSWORD_VALUE ]]; then
@@ -270,14 +280,14 @@ if [[ $JEFF_ENABLED == "y" ]]; then
 				echo "AZURE_API_KEY is set"
 			fi
 
-			GEMINI_API_KEY_VALUE=$(grep 'GEMINI_API_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*GEMINI_API_KEY=//;s/"//g' | xargs)
-			if [[ -z $GEMINI_API_KEY_VALUE || $GEMINI_API_KEY_VALUE == '${GEMINI_API_KEY}' ]]; then
-				msg="WARNING: GEMINI_API_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
+			GCP_S_A_CREDENTIALS_VALUE=$(grep 'GCP_SERVICE_ACCOUNT_KEY=' "$JEFF_FILE" | head -1 | sed 's/.*GCP_SERVICE_ACCOUNT_KEY=//')
+			if [[ -z $GCP_S_A_CREDENTIALS_VALUE || $GCP_S_A_CREDENTIALS_VALUE == '${GCP_S_A_CREDENTIALS}' ]]; then
+				msg="WARNING: GCP_SERVICE_ACCOUNT_KEY must be set to a real value in $JEFF_FILE when Jeff is enabled"
 				echo "$msg"
 				WARNINGS+=("$msg")
 				JEFF_VALUES_FILLED=0
 			else
-				echo "GEMINI_API_KEY is set"
+				echo "GCP_SERVICE_ACCOUNT_KEY is set"
 			fi
 
 			REDIS_PASSWORD_VALUE=$(grep 'REDIS_PASSWORD=' "$JEFF_FILE" | head -1 | sed 's/.*REDIS_PASSWORD=//;s/"//g' | xargs)
@@ -321,11 +331,13 @@ fi
 # —————————————————————————————————————————————————————————————
 
 if [[ $JEFF_ENABLED == "y" && $JEFF_VALUES_FILLED -eq 1 ]]; then
-	echo "Checking Azure and Gemini API connectivity..."
-	check_gemini_api "$GEMINI_ENDPOINT_VALUE" "$GEMINI_API_KEY_VALUE"
+	echo "Checking Azure API connectivity..."
 	check_azure_endpoint "$AZURE_ENDPOINT_VALUE" "$AZURE_API_KEY_VALUE"
+
+	echo "Checking Gemini API connectivity..."
+	check_gemini_api "$PROJECT_ID_VALUE" "$GEMINI_REGION_VALUE" "$GCP_S_A_CREDENTIALS_VALUE"
 else
-	echo "Azure/Gemini connectivity checks skipped."
+	echo "Azure and Gemini connectivity checks skipped."
 fi
 
 # —————————————————————————————————————————————————————————————

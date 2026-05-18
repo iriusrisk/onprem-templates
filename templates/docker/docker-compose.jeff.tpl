@@ -40,18 +40,20 @@ services:
   ash:
     environment:
       - CORS_ORIGINS=http://localhost:5173, http://localhost:8003
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_API_KEY}
       - RAG_HOST=http://rag:8010
-      - GEMINI_API_BASE=${GEMINI_ENDPOINT}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - GEMINI_API_KEY=""
+      - GEMINI_PROJECT_ID=${PROJECT_ID}
+      - GEMINI_REGION=${GEMINI_REGION}
+      - GCP_SERVICE_ACCOUNT_KEY=${GCP_S_A_CREDENTIALS}
     ports:
       - 8009:8009
     image: ${ASH_IMAGE}
     container_name: ash
     restart: unless-stopped
     networks:
-    - iriusrisk-backend  
+    - iriusrisk-backend
   haven:
     environment:
       - ENVIRONMENT=PROD

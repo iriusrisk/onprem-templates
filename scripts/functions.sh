@@ -914,7 +914,7 @@ function build_podman_custom_images() {
 	postgres_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
 	jeff_image="$(image_ref "ai-jeff-4.6.2")"
 	rag_image="$(image_ref "ai-rag-1.2.2")"
-	ash_image="$(image_ref "ai-ash-1.7.0")"
+	ash_image="$(image_ref "ai-ash-1.9.0")"
 	haven_image="$(image_ref "ai-haven-1.0.1")"
 	redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
 
@@ -971,8 +971,8 @@ export_from_secret_env KEY_ALIAS_PASSWORD KEY_ALIAS_PWD_GPG KEY_ALIAS_PRIVKEY_AS
 
 		build_podman_secret_image "$rag_image" "temp-rag" "localhost/ai-rag-1.2.2" "$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
-		build_podman_secret_image "$ash_image" "temp-ash" "localhost/ai-ash-1.7.0" $'export_from_secret_env GEMINI_API_KEY GEMINI_API_KEY_GPG GEMINI_API_PRIVKEY_ASC
-export_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC'
+		build_podman_secret_image "$ash_image" "temp-ash" "localhost/ai-ash-1.9.0" $'export_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
+export_from_secret_env GCP_SERVICE_ACCOUNT_KEY GCP_S_A_CREDENTIALS_GPG GCP_S_A_PRIVKEY_ASC'
 
 		build_podman_secret_image "$haven_image" "temp-haven" "localhost/ai-haven-1.0.1" $'export_from_secret_env AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
 export_from_secret_env REDIS_PASSWORD REDIS_PASSWORD_GPG REDIS_PRIVKEY_ASC'
@@ -1943,13 +1943,14 @@ function validate_preserved_values() {
 		# Needed on both engines because they remain in the compose file
 		require_preserved_value "AZURE_ENDPOINT"
 		require_preserved_value "AZURE_OPENAI_ENDPOINT"
-		require_preserved_value "GEMINI_ENDPOINT"
+		require_preserved_value "PROJECT_ID"
+		require_preserved_value "GEMINI_REGION"
 
 		# Only Docker keeps these in the Jeff compose file
 		if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
 			require_preserved_value "AZURE_API_KEY"
 			require_preserved_value "AZURE_OPENAI_API_KEY"
-			require_preserved_value "GEMINI_API_KEY"
+			require_preserved_value "GCP_S_A_CREDENTIALS"
 			require_preserved_value "REDIS_PASSWORD"
 		fi
 	fi
@@ -2128,9 +2129,6 @@ function capture_preserved_values() {
 			POSTGRES_PASSWORD)
 				PRESERVED_VALUES["$p"]="$(extract_postgres_password "$override_file" "$postgres_file" || true)"
 				;;
-			GEMINI_ENDPOINT)
-				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_API_BASE" "$jeff_file" || true)"
-				;;
 			AZURE_ENDPOINT)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
 				;;
@@ -2140,9 +2138,20 @@ function capture_preserved_values() {
 					[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
 				fi
 				;;
-			AZURE_API_KEY | AZURE_OPENAI_API_KEY | GEMINI_API_KEY | REDIS_PASSWORD)
+			PROJECT_ID)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_PROJECT_ID" "$jeff_file" || true)"
+				;;
+			GEMINI_REGION)
+				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_REGION" "$jeff_file" || true)"
+				;;
+			AZURE_API_KEY | AZURE_OPENAI_API_KEY | REDIS_PASSWORD)
 				if [[ ${CONTAINER_ENGINE:-} == "docker" && -n $jeff_file ]]; then
 					PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
+				fi
+				;;
+			GCP_S_A_CREDENTIALS)
+				if [[ ${CONTAINER_ENGINE:-} == "docker" && -n $jeff_file ]]; then
+					PRESERVED_VALUES["$p"]="$(extract_env_value "GCP_SERVICE_ACCOUNT_KEY" "$jeff_file" || true)"
 				fi
 				;;
 			NGINX_IMAGE | TOMCAT_IMAGE | STARTLEFT_IMAGE | REPORTING_MODULE_IMAGE)
@@ -2711,37 +2720,136 @@ function save_local_with_fullref() {
 # —————————————————————————————————————————————————————————————
 
 function check_gemini_api() {
-	local endpoint="$1"
-	local api_key="$2"
-	local tmp_out status
+	# $1 = GEMINI_PROJECT_ID
+	# $2 = GEMINI_REGION
+	# $3 = GCP_SERVICE_ACCOUNT_KEY (full JSON)
+	local project_id="$1"
+	local region="$2"
+	local sa_json="$3"
+	local model="${4:-gemini-2.5-flash}"
+	local tmp_dir sa_file key_file client_email private_key
 
-	tmp_out=$(mktemp)
+	# Dependency checks
+	for cmd in openssl jq; do
+		if ! command -v "$cmd" &>/dev/null; then
+			msg="ERROR: $cmd is required for Gemini connectivity check but not installed"
+			echo "$msg"
+			ERRORS+=("$msg")
+			return 1
+		fi
+	done
 
-	status=$(curl -sS -o "$tmp_out" -w "%{http_code}" \
-		-H "Content-Type: application/json" \
-		-H "Authorization: Bearer $api_key" \
-		-X POST \
-		-d '{
-			"model": "gemini-2.5-flash",
-			"messages": [
-				{"role": "user", "content": "Reply with exactly OK"}
-			],
-			"max_tokens": 5
-		}' \
-		"${endpoint%/}/chat/completions")
+	tmp_dir=$(mktemp -d)
+	trap "rm -rf '$tmp_dir'" RETURN
 
-	if [[ $status == "200" ]]; then
-		echo "Gemini API connectivity OK"
-	else
-		msg="ERROR: Gemini API check failed (HTTP $status). Check GEMINI_ENDPOINT and GEMINI_API_KEY"
+	sa_file="$tmp_dir/sa.json"
+	key_file="$tmp_dir/key.pem"
+
+	# Extract SA fields
+	printf '%s' "$sa_json" >"$sa_file"
+	client_email=$(jq -r '.client_email' "$sa_file" 2>/dev/null) || {
+		msg="ERROR: Failed to parse GCP service account JSON"
 		echo "$msg"
 		ERRORS+=("$msg")
-		echo "Gemini response snippet:"
-		head -c 300 "$tmp_out"
-		echo
+		return 1
+	}
+
+	private_key=$(jq -r '.private_key' "$sa_file" 2>/dev/null) || {
+		msg="ERROR: Failed to extract private_key from service account JSON"
+		echo "$msg"
+		ERRORS+=("$msg")
+		return 1
+	}
+
+	printf '%s' "$private_key" >"$key_file"
+
+	# Validate key
+	if ! openssl pkey -in "$key_file" -check -noout 2>/dev/null; then
+		msg="ERROR: Invalid GCP service account private key"
+		echo "$msg"
+		ERRORS+=("$msg")
+		return 1
 	fi
 
-	rm -f "$tmp_out"
+	# Build JWT assertion (RS256)
+	local now exp header_b64 payload_b64 signing_input signature_b64 assertion
+	now=$(date +%s)
+	exp=$((now + 300))
+
+	header_b64=$(printf '{"alg":"RS256","typ":"JWT"}' |
+		base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+
+	payload_b64=$(printf '{"iss":"%s","scope":"https://www.googleapis.com/auth/cloud-platform","aud":"https://oauth2.googleapis.com/token","iat":%d,"exp":%d}' \
+		"$client_email" "$now" "$exp" |
+		base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+
+	signing_input="${header_b64}.${payload_b64}"
+
+	signature_b64=$(printf '%s' "$signing_input" |
+		openssl dgst -sha256 -sign "$key_file" -binary |
+		base64 | tr '+/' '-_' | tr -d '=' | tr -d '\n')
+
+	assertion="${signing_input}.${signature_b64}"
+
+	# Exchange JWT for access token
+	local post_body token_file http_code access_token
+	post_body="$tmp_dir/post_body.txt"
+	printf '%s' "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=$(printf '%s' "$assertion" | jq -sRr @uri)" >"$post_body"
+
+	token_file="$tmp_dir/token.json"
+	http_code=$(curl -sS -X POST \
+		-H "Content-Type: application/x-www-form-urlencoded" \
+		--data-binary "@$post_body" \
+		-w "%{http_code}" \
+		-o "$token_file" \
+		"https://oauth2.googleapis.com/token")
+
+	if [[ $http_code != "200" ]]; then
+		msg="ERROR: GCP token exchange failed (HTTP $http_code). Check service account credentials"
+		echo "$msg"
+		ERRORS+=("$msg")
+		return 1
+	fi
+
+	access_token=$(jq -r '.access_token // empty' "$token_file")
+	if [[ -z $access_token ]]; then
+		msg="ERROR: No access_token in GCP token response"
+		echo "$msg"
+		ERRORS+=("$msg")
+		return 1
+	fi
+
+	# Call Gemini API via Vertex AI endpoint
+	local api_url response_file generated_text
+	api_url="https://${region}-aiplatform.googleapis.com/v1/projects/${project_id}/locations/${region}/publishers/google/models/${model}:generateContent"
+
+	response_file="$tmp_dir/response.json"
+	http_code=$(curl -sS -o "$response_file" -w "%{http_code}" \
+		-H "Authorization: Bearer $access_token" \
+		-H "Content-Type: application/json" \
+		-X POST \
+		-d '{
+			"contents": [{"role": "user", "parts": [{"text": "Reply with exactly OK"}]}],
+			"generationConfig": {"maxOutputTokens": 5, "thinkingConfig": {"thinkingBudget": 0}}
+		}' \
+		"$api_url")
+
+	if [[ $http_code != "200" ]]; then
+		msg="ERROR: Gemini API check failed (HTTP $http_code). Check project, region, and service account permissions"
+		echo "$msg"
+		ERRORS+=("$msg")
+		echo "   Response: $(head -c 300 "$response_file")"
+		return 1
+	fi
+
+	generated_text=$(jq -r '.candidates[0].content.parts[0].text // "NO TEXT"' "$response_file")
+	if [[ $generated_text == "OK" ]]; then
+		echo "Gemini API connectivity OK (project=$project_id, region=$region)"
+	else
+		msg="WARNING: Gemini API responded but returned unexpected text: '$generated_text'"
+		echo "$msg"
+		WARNINGS+=("$msg")
+	fi
 }
 
 function check_azure_endpoint() {
@@ -2783,10 +2891,22 @@ function prompt_jeff_config() {
 
 	AZURE_ENDPOINT=$(prompt_nonempty "Enter the Azure endpoint for Jeff AI assistant")
 	AZURE_API_KEY=$(prompt_nonempty "Enter the Azure API key for Jeff AI assistant")
-	GEMINI_ENDPOINT=$(prompt_nonempty "Enter the Gemini endpoint for Jeff AI assistant")
-	GEMINI_API_KEY=$(prompt_nonempty "Enter the Gemini API key for Jeff AI assistant")
+	PROJECT_ID=$(prompt_nonempty "Enter the GCP Project ID for Ash")
+	GEMINI_REGION=$(prompt_nonempty "Enter the Gemini region for Ash")
+	# GCP SA JSON is multi-line — read until empty line
+	echo "Paste the GCP Service Account JSON key, then press enter twice:"
+	GCP_S_A_CREDENTIALS=""
+	while IFS= read -r line; do
+		[[ -z $line ]] && break
+		[[ -n $GCP_S_A_CREDENTIALS ]] && GCP_S_A_CREDENTIALS+=$'\n'
+		GCP_S_A_CREDENTIALS+="$line"
+	done
+	if [[ -z $GCP_S_A_CREDENTIALS ]]; then
+		echo "Invalid input: GCP Service Account credentials cannot be empty." >&2
+		exit 1
+	fi
 
-	export AZURE_ENDPOINT AZURE_API_KEY GEMINI_ENDPOINT GEMINI_API_KEY
+	export AZURE_ENDPOINT AZURE_API_KEY PROJECT_ID GEMINI_REGION GCP_S_A_CREDENTIALS
 }
 
 function update_base_override_env() {
@@ -2867,24 +2987,39 @@ function configure_jeff_file() {
 
 	sed -i "s|AZURE_ENDPOINT=.*|AZURE_ENDPOINT=$AZURE_ENDPOINT|g" "$jeff_file"
 	sed -i "s|AZURE_OPENAI_ENDPOINT=.*|AZURE_OPENAI_ENDPOINT=$AZURE_ENDPOINT|g" "$jeff_file"
-	sed -i "s|GEMINI_API_BASE=.*|GEMINI_API_BASE=$GEMINI_ENDPOINT|g" "$jeff_file"
+	sed -i "s|PROJECT_ID=.*|PROJECT_ID=$PROJECT_ID|g" "$jeff_file"
+	sed -i "s|GEMINI_REGION=.*|GEMINI_REGION=$GEMINI_REGION|g" "$jeff_file"
+	# Write SA key as compact JSON (single line) to replace placeholder
+	_tmp_sa=$(mktemp)
+	echo "$GCP_S_A_CREDENTIALS" >"$_tmp_sa"
+	python3 -c "
+import sys, json, re
+# Read the SA JSON
+with open(sys.argv[1]) as f:
+    sa_data = json.load(f)
+# Read the Jeff compose file
+with open(sys.argv[2]) as f:
+    content = f.read()
+# Replace placeholder with compact JSON
+placeholder = '\${GCP_S_A_CREDENTIALS}'
+content = content.replace(placeholder, json.dumps(sa_data, separators=(',', ':')))
+# Write back
+with open(sys.argv[2], 'w') as f:
+    f.write(content)
+" "$_tmp_sa" "$jeff_file"
+	rm -f "$_tmp_sa"
 
 	if [[ $CONTAINER_ENGINE == "docker" ]]; then
 		sed -i "s|AZURE_API_KEY=.*|AZURE_API_KEY=$AZURE_API_KEY|g" "$jeff_file"
 		sed -i "s|AZURE_OPENAI_API_KEY=.*|AZURE_OPENAI_API_KEY=$AZURE_API_KEY|g" "$jeff_file"
-		sed -i "s|GEMINI_API_KEY=.*|GEMINI_API_KEY=$GEMINI_API_KEY|g" "$jeff_file"
 
-		escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\]/\\&/g')
+		escaped_redis_password=$(printf '%s\n' "$REDIS_PASSWORD" | sed 's/[&/\\]/\\&/g')
 		sed -i "s|\"\${REDIS_PASSWORD}\"|\"$escaped_redis_password\"|g" "$jeff_file"
 		sed -i "s|\${REDIS_PASSWORD}|$escaped_redis_password|g" "$jeff_file"
 	else
-		sed -i '/AZURE_API_KEY=/d' "$jeff_file"
-		sed -i '/AZURE_OPENAI_API_KEY=/d' "$jeff_file"
-		sed -i '/GEMINI_API_KEY=/d' "$jeff_file"
-		sed -i '/REDIS_PASSWORD=/d' "$jeff_file"
 
 		encrypt_and_store_secret "$AZURE_API_KEY" "azure_api_key" "azure_api_privkey"
-		encrypt_and_store_secret "$GEMINI_API_KEY" "gemini_api_key" "gemini_api_privkey"
+		encrypt_and_store_secret "$GCP_S_A_CREDENTIALS" "gcp_sa_credentials" "gcp_sa_privkey"
 		encrypt_and_store_secret "$REDIS_PASSWORD" "redis_password" "redis_privkey"
 	fi
 
@@ -2923,7 +3058,7 @@ function update_compose_image_placeholders() {
 		if [[ -f $jeff_file ]]; then
 			jeff_image="$(image_ref "ai-jeff-4.6.2")"
 			rag_image="$(image_ref "ai-rag-1.2.2")"
-			ash_image="$(image_ref "ai-ash-1.7.0")"
+			ash_image="$(image_ref "ai-ash-1.9.0")"
 			haven_image="$(image_ref "ai-haven-1.0.1")"
 			redis_image="$(redis_image_ref)"
 

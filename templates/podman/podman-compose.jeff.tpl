@@ -52,20 +52,22 @@ services:
   ash:
     environment:
       - CORS_ORIGINS=http://localhost:5173, http://localhost:8003
+      - AZURE_OPENAI_ENDPOINT=${AZURE_ENDPOINT}
       - RAG_HOST=http://rag:8010
-      - GEMINI_API_BASE=${GEMINI_ENDPOINT}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - GEMINI_API_KEY=""
+      - GEMINI_PROJECT_ID=${PROJECT_ID}
+      - GEMINI_REGION=${GEMINI_REGION}
     ports:
       - 8009:8009
-    image: localhost/ai-ash-1.7.0
+    image: localhost/ai-ash-1.9.0
     container_name: ash
     restart: unless-stopped
     secrets:
-      - source: gemini_api_key
-        target: GEMINI_API_KEY_GPG
+      - source: gcp_sa_credentials
+        target: GCP_S_A_CREDENTIALS_GPG
         type: env
-      - source: gemini_api_privkey
-        target: GEMINI_API_PRIVKEY_ASC
+      - source: gcp_sa_privkey
+        target: GCP_S_A_PRIVKEY_ASC
         type: env
       - source: azure_api_key
         target: AZURE_API_KEY_GPG
@@ -128,9 +130,9 @@ secrets:
     external: true
   azure_api_privkey:
     external: true
-  gemini_api_key:
+  gcp_sa_credentials:
     external: true
-  gemini_api_privkey:
+  gcp_sa_privkey:
     external: true
   redis_password:
     external: true

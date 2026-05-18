@@ -62,7 +62,7 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 - Runs interactively and asks questions about:
   - PostgreSQL setup (internal or external)
   - Hostname and external URLs
-  - Azure and Gemini endpoints and API keys if installing Jeff
+  - Azure endpoint/API key, GCP Project ID, Gemini region, and GCP Service Account JSON if installing Jeff
 - Updates configuration files accordingly.
 - Can be run standalone if you want to just configure and not deploy.
 
@@ -95,9 +95,9 @@ Do **not** run these scripts on a machine that already has a PostgreSQL database
 3. **Answer interactive prompts**:
    - Select container registry (default or custom)
    - Decide how to set up PostgreSQL (internal container or external DB)
-   - Choose whether to install Jeff (AI assistant)
+- Decide whether to install Jeff (AI assistant)
    - Provide hostname
-   - Provide Azure and Gemini endpoints and API keys if installing Jeff
+   - Provide Azure endpoint/API key and GCP Project ID, Gemini region, and GCP Service Account JSON if installing Jeff
    - Confirm deployment
 
 4. **Deployment starts**:
@@ -148,35 +148,60 @@ The container engine is selected automatically based on the detected Linux distr
 
 ## 🤖 Jeff (AI Assistant)
 
-Jeff is the IriusRisk AI assistant and can be installed either:
+Jeff is the IriusRisk AI assistant, composed of a multi-service stack deployed during IriusRisk setup. The stack includes:
 
--   During initial setup (`one-click.sh`)
--   During an upgrade (`upgrade.sh`)
+- **Jeff** — orchestration layer, handles user queries and routes to AI providers
+- **RAG** — retrieval-augmented generation with Azure OpenAI embeddings
+- **Ash** — Gemini provider service (uses GCP Service Account credentials for Vertex AI)
+- **Haven** — secure storage and indexing layer
+- **Redis** — caching and session persistence
+
+Jeff can be installed either:
+
+- During initial setup (`one-click.sh`)
+- During an upgrade (`upgrade.sh`)
+
+### Prerequisites
+
+To enable Jeff, you need credentials for **both** AI providers:
+
+| Provider | Credentials |
+|----------|-------------|
+| **Azure OpenAI** | Endpoint URL and API key |
+| **Gemini (Ash)** | GCP Project ID, Gemini region, and GCP Service Account JSON key |
+
+#### GCP Service Account
+
+The Gemini provider (Ash) authenticates using a GCP Service Account JSON key rather than a direct API key. Ash performs a JWT (RS256) token exchange with Google's OAuth2 endpoint to obtain an access token, then calls the Vertex AI `generateContent` API.
+
+During setup, you will paste the full SA JSON key (multi-line) when prompted. The automation inlines the SA credentials into the Jeff compose configuration.
 
 ### Installation (Fresh Setup)
 
 During setup, you will be prompted to enable Jeff.
 
-If enabled: 
-   - Jeff services are included in deployment 
-   - Configuration is applied automatically
+If enabled:
+- All Jeff services are included in deployment
+- Configuration is applied automatically
 
 ### Installation During Upgrade
 
-During upgrade, you can: 
+During upgrade, you can:
 
 - Enable Jeff if not already installed
 
-If enabled: 
+If enabled:
 
-- Compose file is created from template 
-- Systemd service is updated 
+- Compose file is created from template
+- Systemd service is updated
 - Stack is restarted with Jeff enabled
 
 ### Notes
 
--   Jeff is deployed as an additional compose layer
--   Existing installations are preserved during upgrades
+- Jeff is deployed as an additional compose layer
+- Existing installations are preserved during upgrades
+- **Podman**: All Jeff/Ash secrets (Azure API key, GCP SA credentials, Redis password) are encrypted and injected via Podman secrets
+- Ash uses GCP Service Account JWT flow — no raw API keys are stored
 
 ---
 
@@ -526,7 +551,7 @@ postgres-15.4
 
 ### 🤖 Jeff (AI Assistant) Dependencies
 
-If installing **Jeff**, the following image must be available:
+If installing **Jeff**, the following images must be available:
 
 ```text
 redis-stack-latest

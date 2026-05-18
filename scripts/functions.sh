@@ -914,7 +914,7 @@ function build_podman_custom_images() {
 	postgres_image="${POSTGRES_BASE_IMAGE:-docker.io/library/postgres:15.4}"
 	jeff_image="$(image_ref "ai-jeff-4.6.2")"
 	rag_image="$(image_ref "ai-rag-1.2.2")"
-	ash_image="$(image_ref "ai-ash-1.9.0")"
+	ash_image="$(image_ref "ai-ash-1.9.1")"
 	haven_image="$(image_ref "ai-haven-1.0.1")"
 	redis_image="${REDIS_BASE_IMAGE:-docker.io/redis/redis-stack:latest}"
 
@@ -971,7 +971,7 @@ export_from_secret_env KEY_ALIAS_PASSWORD KEY_ALIAS_PWD_GPG KEY_ALIAS_PRIVKEY_AS
 
 		build_podman_secret_image "$rag_image" "temp-rag" "localhost/ai-rag-1.2.2" "$(podman_secret_to_env_snippet AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC)"
 
-		build_podman_secret_image "$ash_image" "temp-ash" "localhost/ai-ash-1.9.0" $'export_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
+		build_podman_secret_image "$ash_image" "temp-ash" "localhost/ai-ash-1.9.1" $'export_from_secret_env AZURE_OPENAI_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
 export_from_secret_env GCP_SERVICE_ACCOUNT_KEY GCP_S_A_CREDENTIALS_GPG GCP_S_A_PRIVKEY_ASC'
 
 		build_podman_secret_image "$haven_image" "temp-haven" "localhost/ai-haven-1.0.1" $'export_from_secret_env AZURE_API_KEY AZURE_API_KEY_GPG AZURE_API_PRIVKEY_ASC
@@ -3058,7 +3058,7 @@ function update_compose_image_placeholders() {
 		if [[ -f $jeff_file ]]; then
 			jeff_image="$(image_ref "ai-jeff-4.6.2")"
 			rag_image="$(image_ref "ai-rag-1.2.2")"
-			ash_image="$(image_ref "ai-ash-1.9.0")"
+			ash_image="$(image_ref "ai-ash-1.9.1")"
 			haven_image="$(image_ref "ai-haven-1.0.1")"
 			redis_image="$(redis_image_ref)"
 

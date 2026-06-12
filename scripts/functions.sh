@@ -1942,14 +1942,12 @@ function validate_preserved_values() {
 	if [[ ${JEFF_ENABLED:-n} == "y" ]]; then
 		# Needed on both engines because they remain in the compose file
 		require_preserved_value "AZURE_ENDPOINT"
-		require_preserved_value "AZURE_OPENAI_ENDPOINT"
 		require_preserved_value "PROJECT_ID"
 		require_preserved_value "GEMINI_REGION"
 
 		# Only Docker keeps these in the Jeff compose file
 		if [[ ${CONTAINER_ENGINE:-} == "docker" ]]; then
 			require_preserved_value "AZURE_API_KEY"
-			require_preserved_value "AZURE_OPENAI_API_KEY"
 			require_preserved_value "GCP_S_A_CREDENTIALS"
 			require_preserved_value "REDIS_PASSWORD"
 		fi
@@ -2132,19 +2130,13 @@ function capture_preserved_values() {
 			AZURE_ENDPOINT)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
 				;;
-			AZURE_OPENAI_ENDPOINT)
-				if [[ -n $jeff_file ]]; then
-					PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_OPENAI_ENDPOINT" "$jeff_file" || true)"
-					[[ -z ${PRESERVED_VALUES[$p]} ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "AZURE_ENDPOINT" "$jeff_file" || true)"
-				fi
-				;;
 			PROJECT_ID)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_PROJECT_ID" "$jeff_file" || true)"
 				;;
 			GEMINI_REGION)
 				[[ -n $jeff_file ]] && PRESERVED_VALUES["$p"]="$(extract_env_value "GEMINI_REGION" "$jeff_file" || true)"
 				;;
-			AZURE_API_KEY | AZURE_OPENAI_API_KEY | REDIS_PASSWORD)
+			AZURE_API_KEY | REDIS_PASSWORD)
 				if [[ ${CONTAINER_ENGINE:-} == "docker" && -n $jeff_file ]]; then
 					PRESERVED_VALUES["$p"]="$(extract_env_value "$p" "$jeff_file" || true)"
 				fi

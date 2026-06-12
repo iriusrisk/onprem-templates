@@ -48,9 +48,9 @@ update_base_override_env "$OVERRIDE_FILE" "$HOST_NAME" "$IRIUS_EXT_URL" "$JDBC_U
 
 if [[ $JEFF_ENABLED == "y" ]]; then
 	enable_jeff_override_env "$OVERRIDE_FILE"
+	configure_jeff_file "$JEFF_FILE"
 fi
 
-configure_jeff_file "$JEFF_FILE"
 create_certificates "$HOST_NAME"
 
 # —————————————————————————————————————————————————————————————
